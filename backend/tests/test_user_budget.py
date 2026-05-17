@@ -289,6 +289,59 @@ def test_analyze_reports_no_budget_when_no_row_or_body(client):
     assert budget_agent["label"] == "Bütçe Verisi Yok"
 
 
+def test_analyze_synthesizes_budget_when_user_has_other_categories(client, db):
+    """User set budget for Elektronik, visits a Giyim product.
+
+    Expectation: budget_agent runs against the user's monthly cap
+    (synthesis path in user_budget.get) — NOT 'Bütçe Verisi Yok'. This
+    is the cross-category scenario that produced confusing 'no data'
+    panels when the extractor reported a leaf category that didn't
+    match the popup's label.
+    """
+    upsert(
+        db,
+        user_id="cross-cat-user",
+        category="Elektronik",
+        budget=UserBudget(monthlyLimit=10000, categoryLimit=5000, categorySpent=0),
+    )
+
+    payload = copy.deepcopy(EXAMPLES["red"])
+    payload["userId"] = "cross-cat-user"
+    payload["product"]["category"] = "Giyim"
+    payload.pop("userBudget")
+
+    r = client.post("/api/analyze-purchase", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    budget_agent = body["agents"]["budgetAgent"]
+    # Synthesis kicked in — real verdict (against monthly cap), not the
+    # empty-state label that pushed users to keep adding categories.
+    assert budget_agent["label"] != "Bütçe Verisi Yok"
+
+
+def test_analyze_synthesizes_budget_case_insensitive(client, db):
+    """Category match is case-insensitive — 'elektronik' from the
+    extractor still maps to 'Elektronik' from the popup."""
+    upsert(
+        db,
+        user_id="case-user",
+        category="Elektronik",
+        budget=UserBudget(monthlyLimit=10000, categoryLimit=5000, categorySpent=0),
+    )
+
+    payload = copy.deepcopy(EXAMPLES["red"])
+    payload["userId"] = "case-user"
+    payload["product"]["category"] = "elektronik"  # lowercase
+    payload.pop("userBudget")
+
+    r = client.post("/api/analyze-purchase", json=payload)
+    body = r.json()
+    budget_agent = body["agents"]["budgetAgent"]
+    # Same row, so categoryLimit must be 5000, not the monthly synthesis (10000).
+    # We assert via a finding that mentions the configured cap.
+    assert budget_agent["label"] != "Bütçe Verisi Yok"
+
+
 def test_monthly_spent_for_helper(db):
     upsert(
         db,

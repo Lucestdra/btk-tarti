@@ -15,6 +15,7 @@ LangGraph içindedir. Eski sıralı çağrı kodu kaldırıldı.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -24,6 +25,8 @@ from app.services import graph as analysis_graph
 from app.services.external_price_history import fetch_for_product as fetch_external_history
 from app.services.price_history import get_recent
 from app.services.user_budget import get as get_budget
+
+logger = logging.getLogger(__name__)
 
 
 def analyze(req: AnalyzeRequest, *, db: Optional[Session] = None) -> AnalyzeResponse:
@@ -51,5 +54,13 @@ def analyze(req: AnalyzeRequest, *, db: Optional[Session] = None) -> AnalyzeResp
         stored = get_budget(db, req.userId, req.product.category)
         if stored is not None:
             req = req.model_copy(update={"userBudget": stored})
+        else:
+            # Visible in docker logs to debug "Bütçe Verisi Yok" reports.
+            logger.info(
+                "budget.miss user=%s category=%r — no rows for this user "
+                "(verify popup save and that userId matches)",
+                req.userId[:12] + "…" if len(req.userId) > 12 else req.userId,
+                req.product.category,
+            )
 
     return analysis_graph.run(req)

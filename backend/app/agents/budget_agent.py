@@ -50,13 +50,25 @@ def _monthly_score(pct_after: int) -> int:
 
 def run(req: AnalyzeRequest) -> AgentResult:
     if req.userBudget is None:
-        # Orchestrator should always populate this, but if a caller goes
-        # straight to the agent we still return a neutral result instead
-        # of crashing on attribute access.
+        # No budget rows for this user at all. The message names the
+        # detected category so the user can compare it against what they
+        # set in the popup — a category mismatch is the most common
+        # cause (e.g. budget set for "Elektronik" but extractor reported
+        # "Sweatshirt").
+        category = (req.product.category or "?").strip()
         return AgentResult(
             score=0,
             label="Bütçe Verisi Yok",
-            findings=[AgentFinding(severity="info", message="Bu kullanıcı için bütçe verisi yok.")],
+            findings=[
+                AgentFinding(
+                    severity="info",
+                    message=(
+                        f"Algılanan kategori: '{category}'. Bu kullanıcı için "
+                        "uçtan uca bütçe verisi bulunamadı; popup'tan bu kategori "
+                        "için limit eklemeyi deneyin."
+                    ),
+                )
+            ],
         )
 
     b = req.userBudget
