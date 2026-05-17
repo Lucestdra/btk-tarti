@@ -9,4 +9,4 @@ psycopg2-binary==2.9.10
 langgraph==0.2.60
 google-genai==1.75.0
 pytest==8.3.3
-httpx==0.27.2
+httpx==0.28.1
