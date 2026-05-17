@@ -19,3 +19,6 @@ export const API_BASE = import.meta.env.PROD ? PROD_API_BASE : DEV_API_BASE;
 export const ANALYZE_URL = `${API_BASE}/api/analyze-purchase`;
 export const ANALYZE_STREAM_URL = `${API_BASE}/api/analyze-purchase/stream`;
 export const OBSERVATION_URL = `${API_BASE}/api/price-observation`;
+export const PURCHASE_URL = `${API_BASE}/api/purchases`;
+export const USER_BUDGETS_URL = `${API_BASE}/api/user-budgets`;
+export const USER_BUDGET_URL = `${API_BASE}/api/user-budget`;

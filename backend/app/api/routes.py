@@ -30,16 +30,26 @@ from app.models.schemas import (
     AgentResult,
     AnalyzeRequest,
     AnalyzeResponse,
+    CategoryBudget,
     PriceObservationIn,
     PriceObservationOut,
+    PurchaseIn,
+    PurchaseOut,
     UserBudget,
+    UserBudgetSummary,
 )
 from app.services.graph import _COMPILED as compiled_graph
 from app.services.orchestrator import analyze
 from app.services.price_history import get_recent, insert_observation
 from app.services.url_normalizer import normalize
-from app.services.user_budget import get_or_default as get_budget_or_default
-from app.services.user_budget import upsert as upsert_budget
+from app.services.user_budget import (
+    DEFAULT_BUDGET,
+    get_or_default as get_budget_or_default,
+    list_for_user,
+    monthly_spent_for,
+    record_purchase,
+    upsert as upsert_budget,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +196,85 @@ def put_user_budget(
 ) -> UserBudget:
     upsert_budget(db, user_id=userId, category=category, budget=payload)
     return get_budget_or_default(db, userId, category)
+
+
+@router.get(
+    "/user-budgets",
+    response_model=UserBudgetSummary,
+    summary="Kullanıcının tüm bütçe özetini getir (popup için)",
+    description=(
+        "Tek kullanıcı için aylık limit + her kategori limiti ve "
+        "mevcut ay harcaması döner. Hiç kayıt yoksa boş özet "
+        "döner (categories=[], spent=0)."
+    ),
+)
+def get_user_budgets_summary(userId: str, db: Session = Depends(get_db)) -> UserBudgetSummary:
+    rows = list_for_user(db, userId)
+    if not rows:
+        from datetime import date
+
+        period_start = date.today().replace(day=1).isoformat()
+        return UserBudgetSummary(
+            userId=userId,
+            monthlyLimit=DEFAULT_BUDGET.monthlyLimit,
+            monthlySpent=0.0,
+            currency=DEFAULT_BUDGET.currency,
+            periodStart=period_start,
+            categories=[],
+        )
+
+    monthly_spent = sum(r.category_spent for r in rows)
+    categories = [
+        CategoryBudget(
+            category=r.category,
+            categoryLimit=r.category_limit,
+            categorySpent=r.category_spent,
+        )
+        for r in rows
+    ]
+    return UserBudgetSummary(
+        userId=userId,
+        monthlyLimit=rows[0].monthly_limit,
+        monthlySpent=monthly_spent,
+        currency=rows[0].currency,  # type: ignore[arg-type]
+        periodStart=rows[0].period_start.isoformat(),
+        categories=categories,
+    )
+
+
+@router.post(
+    "/purchases",
+    response_model=PurchaseOut,
+    summary="Kullanıcının taahhüt ettiği bir satın almayı kaydet",
+    description=(
+        "Eklenti `Yine de Devam Et` tıklandığında bu uca POST eder. "
+        "(userId, category) için `category_spent` toplamına `amount` "
+        "eklenir; gelecekteki analizler bu güncel toplamı kullanır. "
+        "Ay sonunda satırlar lazily resetlenir."
+    ),
+)
+@limiter.limit("60/minute")
+def post_purchase(
+    request: Request,
+    payload: PurchaseIn,
+    db: Session = Depends(get_db),
+) -> PurchaseOut:
+    row = record_purchase(
+        db,
+        user_id=payload.userId,
+        category=payload.category,
+        amount=payload.amount,
+    )
+    monthly_total = monthly_spent_for(db, payload.userId)
+    return PurchaseOut(
+        userId=row.user_id,
+        category=row.category,
+        categorySpent=row.category_spent,
+        monthlySpent=monthly_total,
+        categoryLimit=row.category_limit,
+        monthlyLimit=row.monthly_limit,
+        periodStart=row.period_start.isoformat(),
+    )
 
 
 @router.get(

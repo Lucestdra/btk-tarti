@@ -68,6 +68,24 @@ function attachToButton(btn: HTMLElement) {
           request,
           onContinue: () => {
             btn.setAttribute(BYPASS_ATTR, "1");
+            // Record the committed purchase. Fire-and-forget — we don't
+            // want a slow API call to block the user's checkout flow. If
+            // the price is unknown we skip recording (sending 0 would be
+            // worse than nothing — it'd create a row with categoryLimit
+            // = 0 inheriting nothing useful).
+            if (request.product.price > 0) {
+              chrome.runtime
+                .sendMessage({
+                  type: "purchase",
+                  payload: {
+                    userId: request.userId,
+                    category: request.product.category,
+                    amount: request.product.price,
+                    currency: "TRY",
+                  },
+                })
+                .catch((err) => console.warn("[Thundrly] satın alma kaydedilemedi:", err));
+            }
             setTimeout(() => btn.click(), 0);
           },
           onPause: () => {

@@ -76,7 +76,6 @@ def _seed_user_budgets(db: Session) -> int:
                 user_id=user_id,
                 category=category,
                 monthly_limit=float(budget["monthlyLimit"]),
-                monthly_spent=float(budget.get("monthlySpent") or 0.0),
                 category_limit=float(budget["categoryLimit"]),
                 category_spent=float(budget["categorySpent"]),
                 currency=budget.get("currency", "TRY"),

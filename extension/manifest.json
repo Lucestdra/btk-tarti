@@ -5,7 +5,8 @@
   "version": "0.1.0",
   "description": "Satın almadan önce 5 saniyelik akıllı kontrol — Türk e-ticaret için AI alışveriş asistanı.",
   "action": {
-    "default_title": "Thundrly",
+    "default_title": "Thundrly — Bütçe",
+    "default_popup": "src/popup/index.html",
     "default_icon": {
       "16": "public/icons/icon-16.png",
       "32": "public/icons/icon-32.png",

@@ -9,9 +9,9 @@ matter of replaying the table at that timestamp.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import DateTime, Float, Index, Integer, PrimaryKeyConstraint, String
+from sqlalchemy import Date, DateTime, Float, Index, Integer, PrimaryKeyConstraint, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -19,6 +19,11 @@ from app.db.database import Base
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _month_start() -> date:
+    today = date.today()
+    return date(today.year, today.month, 1)
 
 
 class PriceObservation(Base):
@@ -52,12 +57,16 @@ class PriceObservation(Base):
 class UserBudgetRow(Base):
     """Per-user, per-category spend limits.
 
-    Denormalized on purpose: `monthly_limit` and `monthly_spent` are
-    per-user values but stored on every category row, so a single lookup
-    by (user_id, category) hands the budget agent the full UserBudget
-    snapshot. Production would normalize into user_accounts +
-    category_budgets, but for the hackathon the read-pattern dominates and
-    write-pattern is rare — denormalization is the right trade.
+    `monthly_limit` is denormalized across a user's category rows (every
+    row carries the same value) — the analysis path looks up by
+    (user_id, category) and needs both limits in one read.
+
+    `category_spent` is the running tally for the current period only;
+    it auto-resets when the service-layer reads see `period_start` <
+    first-day-of-current-month and zero it before responding.
+
+    A user's monthly spent is computed on read as the SUM of
+    `category_spent` across their rows — no denormalized column.
     """
 
     __tablename__ = "user_budgets"
@@ -65,9 +74,9 @@ class UserBudgetRow(Base):
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     category: Mapped[str] = mapped_column(String(64), nullable=False)
     monthly_limit: Mapped[float] = mapped_column(Float, nullable=False)
-    monthly_spent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     category_limit: Mapped[float] = mapped_column(Float, nullable=False)
     category_spent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False, default=_month_start)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="TRY")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
@@ -80,5 +89,6 @@ class UserBudgetRow(Base):
     def __repr__(self) -> str:  # pragma: no cover
         return (
             f"<UserBudgetRow user={self.user_id!r} cat={self.category!r} "
-            f"limit={self.category_limit} spent={self.category_spent}>"
+            f"limit={self.category_limit} spent={self.category_spent} "
+            f"period={self.period_start.isoformat()}>"
         )

@@ -14,14 +14,18 @@
  */
 
 import type { AnalyzeRequest, AnalyzeResponse } from "@shared/types/analysis";
-import { ANALYZE_STREAM_URL, ANALYZE_URL, OBSERVATION_URL } from "@/config";
+import { ANALYZE_STREAM_URL, ANALYZE_URL, OBSERVATION_URL, PURCHASE_URL } from "@/config";
 
 type AnalyzeMessage = { type: "analyze"; payload: AnalyzeRequest };
 type ObservationMessage = {
   type: "priceObservation";
   payload: { url: string; price: number; currency: "TRY"; title?: string };
 };
-type IncomingMessage = AnalyzeMessage | ObservationMessage;
+type PurchaseMessage = {
+  type: "purchase";
+  payload: { userId: string; category: string; amount: number; currency: "TRY" };
+};
+type IncomingMessage = AnalyzeMessage | ObservationMessage | PurchaseMessage;
 
 chrome.runtime.onMessage.addListener((msg: IncomingMessage, _sender, sendResponse) => {
   if (msg?.type === "analyze") {
@@ -58,6 +62,26 @@ chrome.runtime.onMessage.addListener((msg: IncomingMessage, _sender, sendRespons
           return;
         }
         sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg?.type === "purchase") {
+    (async () => {
+      try {
+        const r = await fetch(PURCHASE_URL, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(msg.payload),
+        });
+        if (!r.ok) {
+          sendResponse({ ok: false, error: `HTTP ${r.status}` });
+          return;
+        }
+        sendResponse({ ok: true, data: await r.json() });
       } catch (e) {
         sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
       }

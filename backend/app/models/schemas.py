@@ -48,6 +48,23 @@ class UserBudget(BaseModel):
     currency: Currency = "TRY"
 
 
+class CategoryBudget(BaseModel):
+    """One row in the user's budget — name + limit + current-period spend."""
+    category: str
+    categoryLimit: float
+    categorySpent: float
+
+
+class UserBudgetSummary(BaseModel):
+    """All of a user's budget data, suitable for the popup UI."""
+    userId: str
+    monthlyLimit: float
+    monthlySpent: float
+    currency: Currency = "TRY"
+    periodStart: str  # ISO date, "YYYY-MM-01"
+    categories: List[CategoryBudget]
+
+
 class SessionContext(BaseModel):
     timeOnPageSeconds: float
     clickSpeedMs: float
@@ -113,3 +130,27 @@ class PriceObservationOut(BaseModel):
     canonicalUrl: str
     platform: str
     storedAt: str  # ISO 8601 UTC
+
+
+class PurchaseIn(BaseModel):
+    """Recorded when the user clicks 'Yine de Devam Et' in the panel.
+
+    Treated as a committed purchase; the backend bumps the running
+    `category_spent` total for (userId, category) by `amount`.
+    """
+
+    userId: str = Field(min_length=1, max_length=64)
+    category: str = Field(min_length=1, max_length=64)
+    amount: float = Field(gt=0, lt=10_000_000)
+    currency: Currency = "TRY"
+
+
+class PurchaseOut(BaseModel):
+    ok: bool = True
+    userId: str
+    category: str
+    categorySpent: float
+    monthlySpent: float
+    categoryLimit: float
+    monthlyLimit: float
+    periodStart: str  # ISO 8601 date

@@ -84,6 +84,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/purchases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Kullanıcının taahhüt ettiği bir satın almayı kaydet
+         * @description Eklenti `Yine de Devam Et` tıklandığında bu uca POST eder. (userId, category) için `category_spent` toplamına `amount` eklenir; gelecekteki analizler bu güncel toplamı kullanır. Ay sonunda satırlar lazily resetlenir.
+         */
+        post: operations["post_purchase_api_purchases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ready": {
         parameters: {
             query?: never;
@@ -121,6 +141,26 @@ export interface paths {
          * @description (userId, category) için upsert. Aynı çiftte birden fazla satır olmaz.
          */
         put: operations["put_user_budget_api_user_budget_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-budgets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Kullanıcının tüm bütçe özetini getir (popup için)
+         * @description Tek kullanıcı için aylık limit + her kategori limiti ve mevcut ay harcaması döner. Hiç kayıt yoksa boş özet döner (categories=[], spent=0).
+         */
+        get: operations["get_user_budgets_summary_api_user_budgets_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -189,6 +229,18 @@ export interface components {
             riskScore: number;
             /** Summary */
             summary: string;
+        };
+        /**
+         * CategoryBudget
+         * @description One row in the user's budget — name + limit + current-period spend.
+         */
+        CategoryBudget: {
+            /** Category */
+            category: string;
+            /** Categorylimit */
+            categoryLimit: number;
+            /** Categoryspent */
+            categorySpent: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -262,6 +314,49 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * PurchaseIn
+         * @description Recorded when the user clicks 'Yine de Devam Et' in the panel.
+         *
+         *     Treated as a committed purchase; the backend bumps the running
+         *     `category_spent` total for (userId, category) by `amount`.
+         */
+        PurchaseIn: {
+            /** Amount */
+            amount: number;
+            /** Category */
+            category: string;
+            /**
+             * Currency
+             * @default TRY
+             * @enum {string}
+             */
+            currency: "TRY" | "USD" | "EUR";
+            /** Userid */
+            userId: string;
+        };
+        /** PurchaseOut */
+        PurchaseOut: {
+            /** Category */
+            category: string;
+            /** Categorylimit */
+            categoryLimit: number;
+            /** Categoryspent */
+            categorySpent: number;
+            /** Monthlylimit */
+            monthlyLimit: number;
+            /** Monthlyspent */
+            monthlySpent: number;
+            /**
+             * Ok
+             * @default true
+             */
+            ok: boolean;
+            /** Periodstart */
+            periodStart: string;
+            /** Userid */
+            userId: string;
+        };
         /** Review */
         Review: {
             /** Author */
@@ -302,6 +397,28 @@ export interface components {
             monthlyLimit: number;
             /** Monthlyspent */
             monthlySpent?: number | null;
+        };
+        /**
+         * UserBudgetSummary
+         * @description All of a user's budget data, suitable for the popup UI.
+         */
+        UserBudgetSummary: {
+            /** Categories */
+            categories: components["schemas"]["CategoryBudget"][];
+            /**
+             * Currency
+             * @default TRY
+             * @enum {string}
+             */
+            currency: "TRY" | "USD" | "EUR";
+            /** Monthlylimit */
+            monthlyLimit: number;
+            /** Monthlyspent */
+            monthlySpent: number;
+            /** Periodstart */
+            periodStart: string;
+            /** Userid */
+            userId: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -438,6 +555,39 @@ export interface operations {
             };
         };
     };
+    post_purchase_api_purchases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurchaseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     ready_api_ready_get: {
         parameters: {
             query?: never;
@@ -513,6 +663,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserBudget"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_budgets_summary_api_user_budgets_get: {
+        parameters: {
+            query: {
+                userId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserBudgetSummary"];
                 };
             };
             /** @description Validation Error */

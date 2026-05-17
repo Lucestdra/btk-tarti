@@ -176,6 +176,30 @@
         "title": "AnalyzeResponse",
         "type": "object"
       },
+      "CategoryBudget": {
+        "description": "One row in the user's budget — name + limit + current-period spend.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "categoryLimit": {
+            "title": "Categorylimit",
+            "type": "number"
+          },
+          "categorySpent": {
+            "title": "Categoryspent",
+            "type": "number"
+          }
+        },
+        "required": [
+          "category",
+          "categoryLimit",
+          "categorySpent"
+        ],
+        "title": "CategoryBudget",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -363,6 +387,94 @@
         "title": "Product",
         "type": "object"
       },
+      "PurchaseIn": {
+        "description": "Recorded when the user clicks 'Yine de Devam Et' in the panel.\n\nTreated as a committed purchase; the backend bumps the running\n`category_spent` total for (userId, category) by `amount`.",
+        "properties": {
+          "amount": {
+            "exclusiveMaximum": 10000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount",
+            "type": "number"
+          },
+          "category": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Category",
+            "type": "string"
+          },
+          "currency": {
+            "default": "TRY",
+            "enum": [
+              "TRY",
+              "USD",
+              "EUR"
+            ],
+            "title": "Currency",
+            "type": "string"
+          },
+          "userId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "category",
+          "amount"
+        ],
+        "title": "PurchaseIn",
+        "type": "object"
+      },
+      "PurchaseOut": {
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "categoryLimit": {
+            "title": "Categorylimit",
+            "type": "number"
+          },
+          "categorySpent": {
+            "title": "Categoryspent",
+            "type": "number"
+          },
+          "monthlyLimit": {
+            "title": "Monthlylimit",
+            "type": "number"
+          },
+          "monthlySpent": {
+            "title": "Monthlyspent",
+            "type": "number"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "periodStart": {
+            "title": "Periodstart",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "category",
+          "categorySpent",
+          "monthlySpent",
+          "categoryLimit",
+          "monthlyLimit",
+          "periodStart"
+        ],
+        "title": "PurchaseOut",
+        "type": "object"
+      },
       "Review": {
         "properties": {
           "author": {
@@ -481,6 +593,53 @@
           "categorySpent"
         ],
         "title": "UserBudget",
+        "type": "object"
+      },
+      "UserBudgetSummary": {
+        "description": "All of a user's budget data, suitable for the popup UI.",
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryBudget"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "currency": {
+            "default": "TRY",
+            "enum": [
+              "TRY",
+              "USD",
+              "EUR"
+            ],
+            "title": "Currency",
+            "type": "string"
+          },
+          "monthlyLimit": {
+            "title": "Monthlylimit",
+            "type": "number"
+          },
+          "monthlySpent": {
+            "title": "Monthlyspent",
+            "type": "number"
+          },
+          "periodStart": {
+            "title": "Periodstart",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "monthlyLimit",
+          "monthlySpent",
+          "periodStart",
+          "categories"
+        ],
+        "title": "UserBudgetSummary",
         "type": "object"
       },
       "ValidationError": {
@@ -655,6 +814,45 @@
         "summary": "Crowdsource fiyat gözlemi kaydet"
       }
     },
+    "/api/purchases": {
+      "post": {
+        "description": "Eklenti `Yine de Devam Et` tıklandığında bu uca POST eder. (userId, category) için `category_spent` toplamına `amount` eklenir; gelecekteki analizler bu güncel toplamı kullanır. Ay sonunda satırlar lazily resetlenir.",
+        "operationId": "post_purchase_api_purchases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Kullanıcının taahhüt ettiği bir satın almayı kaydet"
+      }
+    },
     "/api/ready": {
       "get": {
         "description": "Process is up AND the database is reachable. Returns 503 if the DB connection fails, so an orchestrator can hold traffic off until migrations finish on first boot.",
@@ -779,6 +977,46 @@
           }
         },
         "summary": "Kullanıcı bütçesini (kategori bazlı) kaydet/güncelle"
+      }
+    },
+    "/api/user-budgets": {
+      "get": {
+        "description": "Tek kullanıcı için aylık limit + her kategori limiti ve mevcut ay harcaması döner. Hiç kayıt yoksa boş özet döner (categories=[], spent=0).",
+        "operationId": "get_user_budgets_summary_api_user_budgets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "title": "Userid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBudgetSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Kullanıcının tüm bütçe özetini getir (popup için)"
       }
     }
   }
