@@ -74,8 +74,12 @@ def _fetch_user_rows(db: Session, user_id: str) -> list[UserBudgetRow]:
 
 
 def _row_for_category(rows: Iterable[UserBudgetRow], category: str) -> Optional[UserBudgetRow]:
+    """Case-insensitive match — extractor categories drift in casing
+    (`elektronik`, `Elektronik`, `ELEKTRONIK`) and we don't want a
+    cosmetic difference to silently drop the user's budget."""
+    target = category.strip().casefold()
     for r in rows:
-        if r.category == category:
+        if r.category.strip().casefold() == target:
             return r
     return None
 

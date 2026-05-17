@@ -258,6 +258,16 @@
   border-radius: 999px;
   transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+.kg-agent-verdict {
+  font-size: 10.5px;
+  letter-spacing: 0.005em;
+  margin-top: 2px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
 
 /* ---------- Summary + reasons ---------- */
 

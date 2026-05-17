@@ -263,13 +263,22 @@ export function App({ request, onContinue, onPause, onClose }: PanelProps) {
             </div>
           </div>
 
-          {/* Agent score bars */}
+          {/* Agent score bars — each shows its score, its verdict label,
+              and on hover its top finding so the user can see *why* each
+              agent concluded what it did instead of just a number. */}
           <div className="kg-agents">
             {AGENT_LABELS.map(({ key, short }) => {
-              const score = Math.max(0, Math.min(100, result.agents[key]?.score ?? 0));
+              const agent = result.agents[key];
+              const score = Math.max(0, Math.min(100, agent?.score ?? 0));
               const tcls = scoreTone(score);
+              const verdict = agent?.label ?? "—";
+              const firstFinding = agent?.findings?.[0]?.message;
               return (
-                <div className="kg-agent" key={key}>
+                <div
+                  className="kg-agent"
+                  key={key}
+                  title={firstFinding ?? verdict}
+                >
                   <div className="kg-agent-row">
                     <span className="kg-agent-label">{short}</span>
                     <span className={`kg-agent-score kg-${tcls}`}>{score}</span>
@@ -280,6 +289,7 @@ export function App({ request, onContinue, onPause, onClose }: PanelProps) {
                       style={{ width: `${score}%` }}
                     />
                   </div>
+                  <div className={`kg-agent-verdict kg-${tcls}`}>{verdict}</div>
                 </div>
               );
             })}

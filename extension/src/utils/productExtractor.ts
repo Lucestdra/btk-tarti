@@ -244,11 +244,43 @@ function readFromPlatform(host: Host): Partial<Product> {
     title: readText(pack.title),
     price: parsePrice(readText(pack.price)),
     originalPrice: parsePrice(readText(pack.originalPrice)),
-    category: readText(pack.category),
+    category: extractTopLevelCategory() ?? readText(pack.category),
     rating: parsePrice(readText(pack.rating)),
     reviewCount: parseCount(readText(pack.reviewCount)),
     imageUrl: readImg(pack.imageUrl),
   };
+}
+
+/**
+ * Return the top-level breadcrumb category (e.g. "Elektronik") rather
+ * than the deepest leaf (e.g. "Aynasız Fotoğraf Makinesi").
+ *
+ * Why: users set budgets at the broad category level
+ * ("Elektronik ₺5000/ay") in the popup. If we pass the leaf category
+ * to the backend, the (userId, category) lookup misses and the budget
+ * agent silently degrades to "Bütçe Verisi Yok".
+ *
+ * Strategy: walk breadcrumb anchors, skip the home node ("Anasayfa" /
+ * "Home" / "Trendyol"), return the first remaining text.
+ */
+function extractTopLevelCategory(): string | undefined {
+  const containers = document.querySelectorAll<HTMLElement>(
+    ".breadcrumb, .breadcrumb-content, .breadcrumb-list, [class*='breadcrumb'], [data-testid*='breadcrumb'], nav[aria-label='breadcrumb']",
+  );
+  const skip = /^(anasayfa|home|trendyol|hepsiburada|n11|migros|teknosa|mediamarkt|boyner|lc waikiki|amazon)$/i;
+
+  for (const container of Array.from(containers)) {
+    const anchors = container.querySelectorAll<HTMLElement>("a, span[itemprop='name'], li");
+    for (const a of Array.from(anchors)) {
+      const text = (a.textContent || "").trim().replace(/\s+/g, " ");
+      if (!text || text.length > 40) continue;
+      if (skip.test(text)) continue;
+      // Skip arrow separators or non-text artifacts.
+      if (/^[›>»→»<-]+$/.test(text)) continue;
+      return text;
+    }
+  }
+  return undefined;
 }
 
 // ---------- Strategy 5: og:meta + <title> ----------

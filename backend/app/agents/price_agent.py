@@ -57,10 +57,14 @@ def run(req: AnalyzeRequest) -> AgentResult:
     score = 0.0
 
     if not window_30:
+        # No history at all — be honest. Returning score=45 with a generic
+        # "Kısmi Manipülasyon" label (score 25-54) reads as a soft accusation
+        # when the truth is we just don't have data. Return a neutral 0 so
+        # this dimension contributes nothing to the weighted decision.
         findings.append(
-            AgentFinding(severity="warn", message="Yeterli fiyat geçmişi yok; indirim doğrulanamadı.")
+            AgentFinding(severity="warn", message="Bu ürün için fiyat geçmişi bulunamadı; indirim doğrulanamadı.")
         )
-        score = 45
+        return AgentResult(score=0, label="Fiyat Geçmişi Yok", findings=findings)
     else:
         # Median (not mean) — resists poisoning from crowdsourced observations.
         avg_30 = median(window_30)
