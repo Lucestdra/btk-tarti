@@ -728,10 +728,10 @@
 .kg-ob-agents { gap: 6px; }
 .kg-ob-agent {
   display: grid;
-  grid-template-columns: 22px 1fr;
+  grid-template-columns: 28px 1fr;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
+  gap: 12px;
+  padding: 10px 12px;
   border-radius: var(--kg-radius-md);
   background: var(--kg-surface-2);
   border: 1px solid var(--kg-line-soft);
@@ -739,17 +739,25 @@
   transform: translateY(6px);
   animation: kg-ob-fade-up 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
-.kg-ob-agent-num {
-  width: 22px;
-  height: 22px;
-  border-radius: 8px;
+/* High specificity so the generic `.kg-ob-agent span` rule below cannot
+   bleed the dark ink color onto the badge. */
+.kg-ob-agent > .kg-ob-agent-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
   background: linear-gradient(135deg, var(--kg-brand), var(--kg-brand-bright));
-  color: white;
+  color: #ffffff;
   font-weight: 700;
-  font-size: 11.5px;
+  font-size: 13.5px;
+  line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 2px 6px -2px color-mix(in srgb, var(--kg-brand) 60%, transparent);
 }
 .kg-ob-agent strong {
   display: block;
@@ -757,12 +765,12 @@
   font-weight: 600;
   color: var(--kg-ink-strong);
 }
-.kg-ob-agent span {
+.kg-ob-agent .kg-ob-agent-body {
   display: block;
   font-size: 11.5px;
   color: var(--kg-ink-soft);
   line-height: 1.4;
-  margin-top: 1px;
+  margin-top: 2px;
 }
 
 @keyframes kg-ob-fade-up {

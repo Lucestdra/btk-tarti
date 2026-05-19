@@ -67,7 +67,7 @@ function StepAgents() {
           <span className="kg-ob-agent-num">{i + 1}</span>
           <div>
             <strong>{a.name}</strong>
-            <span>{a.body}</span>
+            <span className="kg-ob-agent-body">{a.body}</span>
           </div>
         </div>
       ))}

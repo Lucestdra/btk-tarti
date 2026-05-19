@@ -42,15 +42,47 @@ export async function analyzePurchase(
       forceRefresh: options.forceRefresh,
     });
     if (resp && resp.ok) {
+      logAnalyzeResponse(resp.data, "fetch");
       return resp.data;
     }
-    console.warn("[Thundrly] backend yanıtı yok, fallback fixture kullanılıyor:", resp);
+    console.warn(
+      "[Thundrly] backend yanıtı yok — fallback DEMO fixture kullanılıyor. " +
+      "Bu uyarı görüldüğü sürece sonuç GERÇEK analiz değildir.",
+      resp,
+    );
     return redHoodieResponse;
   } catch (e) {
-    console.warn("[Thundrly] backend istisnası, fallback fixture:", e);
+    console.warn(
+      "[Thundrly] backend exception — fallback DEMO fixture. Backend çalışıyor mu? CORS / host_permissions kontrol et.",
+      e,
+    );
     return redHoodieResponse;
   }
 }
+
+/**
+ * Pretty-print the agent verdicts that came back so it's obvious at a
+ * glance whether each agent actually ran (and whether Gemini was on the
+ * path for the two LLM-backed agents). The five lines collapse to a
+ * single console.table call so they line up.
+ */
+function logAnalyzeResponse(r: AnalyzeResponse, via: "fetch" | "stream"): void {
+  try {
+    const rows: Record<string, { score: number; label: string }> = {
+      review:   { score: r.agents.reviewAgent.score,   label: r.agents.reviewAgent.label },
+      price:    { score: r.agents.priceAgent.score,    label: r.agents.priceAgent.label },
+      budget:   { score: r.agents.budgetAgent.score,   label: r.agents.budgetAgent.label },
+      impulse:  { score: r.agents.impulseAgent.score,  label: r.agents.impulseAgent.label },
+      decision: { score: r.agents.decisionAgent.score, label: r.agents.decisionAgent.label },
+    };
+    console.log(`[Thundrly] AnalyzeResponse ← (${via}) decision=${r.decision} risk=${r.riskScore}/100`);
+    console.table(rows);
+  } catch {
+    /* console.table can throw in odd Chrome states — never block the panel */
+  }
+}
+
+export { logAnalyzeResponse };
 
 // ----------------------- streaming ------------------------
 
@@ -92,8 +124,16 @@ export function analyzePurchaseStream(
     port.onMessage.addListener((msg: { type: string; event?: StreamEvent; error?: string }) => {
       if (msg.type === "event" && msg.event) {
         onEvent(msg.event);
-        if (msg.event.event === "verdict") final = msg.event.response;
-        else if (msg.event.event === "error") {
+        if (msg.event.event === "node_finished") {
+          console.log(
+            `[Thundrly] node_finished node=${msg.event.node} ` +
+            `score=${msg.event.result.score} label=${msg.event.result.label}`,
+          );
+        }
+        if (msg.event.event === "verdict") {
+          final = msg.event.response;
+          logAnalyzeResponse(final, "stream");
+        } else if (msg.event.event === "error") {
           settle(() => reject(new Error(msg.event!.event === "error" ? msg.event!.message : "stream error")));
         }
       } else if (msg.type === "end") {

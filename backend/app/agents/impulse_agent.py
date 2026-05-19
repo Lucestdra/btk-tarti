@@ -19,9 +19,12 @@ Eşik notları (Mayıs 2026 ayarlamaları):
 
 from __future__ import annotations
 
+import logging
 from typing import List
 
 from app.models.schemas import AgentFinding, AgentResult, AnalyzeRequest
+
+logger = logging.getLogger(__name__)
 
 
 def run(req: AnalyzeRequest) -> AgentResult:
@@ -103,4 +106,16 @@ def run(req: AnalyzeRequest) -> AgentResult:
                 )
                 break
 
+    logger.info(
+        "impulse_agent.verdict",
+        extra={
+            "event": "impulse_agent.verdict",
+            "score": score,
+            "label": label,
+            "time_on_page_s": s.timeOnPageSeconds,
+            "click_speed_ms": s.clickSpeedMs,
+            "time_of_day": getattr(s, "timeOfDay", None) or getattr(s, "hourOfDay", None),
+            "purchases_today": getattr(s, "purchasesToday", None),
+        },
+    )
     return AgentResult(score=score, label=label, findings=findings)

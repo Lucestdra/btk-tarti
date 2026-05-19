@@ -18,8 +18,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getInstallId } from "@/utils/installId";
-import { USER_BUDGETS_URL, USER_BUDGET_GLOBAL_URL, USER_BUDGET_URL } from "@/config";
+import { HEALTH_URL, USER_BUDGETS_URL, USER_BUDGET_GLOBAL_URL, USER_BUDGET_URL } from "@/config";
 import { LogoMark } from "@/components/LogoMark";
+
+interface HealthStatus {
+  online: boolean;
+  gemini?: boolean;
+  geminiModel?: string | null;
+  error?: string;
+}
 
 interface CategoryBudget {
   category: string;
@@ -42,6 +49,17 @@ interface EditableCategory extends CategoryBudget {
 
 // Common Turkish e-commerce categories — used as quick-add suggestions.
 const SUGGESTED_CATEGORIES = ["Giyim", "Elektronik", "Market", "Kitap", "Ev", "Kozmetik", "Spor"];
+
+async function pingHealth(): Promise<HealthStatus> {
+  try {
+    const r = await fetch(HEALTH_URL, { cache: "no-store" });
+    if (!r.ok) return { online: false, error: `HTTP ${r.status}` };
+    const data = (await r.json()) as { gemini?: boolean; geminiModel?: string | null };
+    return { online: true, gemini: !!data.gemini, geminiModel: data.geminiModel ?? null };
+  } catch (e) {
+    return { online: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 function formatTRY(amount: number): string {
   return new Intl.NumberFormat("tr-TR", {
@@ -80,6 +98,7 @@ export function App() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
 
   const refresh = useCallback(async (uid: string) => {
     setLoading(true);
@@ -102,6 +121,14 @@ export function App() {
     (async () => {
       const uid = await getInstallId();
       setUserId(uid);
+      // Logged on every popup open so the user can match this against the
+      // `userId` field in the [Thundrly] AnalyzeRequest log emitted by the
+      // content script — mismatching installIds is the #1 cause of
+      // "Bütçe Verisi Yok" after a budget save.
+      console.log(`[Thundrly/popup] installId=${uid}`);
+      // Backend health probe runs in parallel with the budget fetch so the
+      // popup footer can show whether Gemini is actually wired in.
+      void pingHealth().then(setHealth);
       await refresh(uid);
     })();
   }, [refresh]);
@@ -329,6 +356,32 @@ export function App() {
         Harcamalar, panelde <strong>Yine de Devam Et</strong>'e bastığında otomatik eklenir.
         Ayın başında otomatik sıfırlanır.
       </p>
+
+      <DiagnosticsRow userId={userId} health={health} />
+    </div>
+  );
+}
+
+function DiagnosticsRow({ userId, health }: { userId: string | null; health: HealthStatus | null }) {
+  // Show a short installId fingerprint + backend/Gemini status so the user
+  // can immediately spot two of the most common misconfigurations:
+  //   - popup saving budget under a different installId than the content
+  //     script sends (would manifest as "Bütçe Verisi Yok" after save)
+  //   - backend reachable but GEMINI_API_KEY missing (review + decision
+  //     fall back to heuristics, which the user may misread as a bug)
+  const idTag = userId ? userId.slice(0, 8) : "—";
+  let backendDot: "ok" | "warn" | "err" = "warn";
+  let backendLabel = "Sunucu yoklanıyor…";
+  if (health) {
+    if (!health.online) { backendDot = "err"; backendLabel = `Sunucu yok (${health.error || "?"})`; }
+    else if (health.gemini) { backendDot = "ok"; backendLabel = `Gemini açık · ${health.geminiModel || ""}`; }
+    else { backendDot = "warn"; backendLabel = "Sunucu açık · Gemini KAPALI (heuristik mod)"; }
+  }
+  return (
+    <div className="pop-diag" title={userId ?? undefined}>
+      <span className={`pop-diag-dot pop-diag-${backendDot}`} />
+      <span className="pop-diag-label">{backendLabel}</span>
+      <span className="pop-diag-id">ID·{idTag}</span>
     </div>
   );
 }

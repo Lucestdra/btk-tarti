@@ -16,11 +16,14 @@ TODO (Gemini): "Gerçek indirim mi?" gerekçesini doğal Türkçe ile LLM özet 
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta
 from statistics import median
 from typing import List, Optional
 
 from app.models.schemas import AgentFinding, AgentResult, AnalyzeRequest, PriceHistoryPoint
+
+logger = logging.getLogger(__name__)
 
 # Threshold above which a claimed original price is flagged as inflated
 # relative to the lowest of our agreeing sources. 15% = a clear-cut
@@ -150,6 +153,10 @@ def run(req: AnalyzeRequest) -> AgentResult:
         #  - We DO know the displayed price but have no comparison points →
         #    "Tek Veri Noktası" (less alarming, more accurate framing)
         if price > 0:
+            logger.info(
+                "price_agent.no_history.single_point",
+                extra={"event": "price_agent.no_history", "price": price, "legal_min_30d": legal_min},
+            )
             findings.append(
                 AgentFinding(
                     severity="info",
@@ -160,6 +167,10 @@ def run(req: AnalyzeRequest) -> AgentResult:
                 )
             )
             return AgentResult(score=0, label="Tek Veri Noktası", findings=findings)
+        logger.warning(
+            "price_agent.no_price",
+            extra={"event": "price_agent.no_price", "price": price, "url": req.product.url[:120]},
+        )
         findings.append(
             AgentFinding(severity="warn", message="Bu ürün için fiyat geçmişi bulunamadı; indirim doğrulanamadı.")
         )
@@ -261,4 +272,17 @@ def run(req: AnalyzeRequest) -> AgentResult:
     if not findings and score < 25:
         findings.append(AgentFinding(severity="info", message="İndirim oranı geçmişle tutarlı."))
 
+    logger.info(
+        "price_agent.verdict",
+        extra={
+            "event": "price_agent.verdict",
+            "score": score,
+            "label": label,
+            "price": price,
+            "original": original,
+            "legal_min_30d": legal_min,
+            "history_30d_count": len(window_30),
+            "history_90d_count": len(window_90),
+        },
+    )
     return AgentResult(score=score, label=label, findings=findings)

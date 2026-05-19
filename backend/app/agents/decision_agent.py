@@ -136,18 +136,52 @@ def run(
     decision, risk_score, triggered = evaluate_rules(agent_map, decision, risk_score)
     label = _label_for(decision)
 
+    logger.info(
+        "decision_agent.computed",
+        extra={
+            "event": "decision_agent.computed",
+            "decision": decision,
+            "risk_score": risk_score,
+            "review_score": review.score, "review_label": review.label,
+            "price_score": price.score, "price_label": price.label,
+            "budget_score": budget.score, "budget_label": budget.label,
+            "impulse_score": impulse.score, "impulse_label": impulse.label,
+            "triggered_rules": [r.name for r in triggered],
+        },
+    )
+
     client = get_client()
     if client is not None:
         try:
-            return _build_with_gemini(
+            response = _build_with_gemini(
                 client, req, decision, risk_score, label,
                 review=review, price=price, budget=budget, impulse=impulse,
                 triggered_rules=triggered,
                 force_refresh=force_refresh,
             )
+            logger.info(
+                "decision_agent.narration",
+                extra={
+                    "event": "decision_agent.narration",
+                    "path": "gemini",
+                    "model": get_model_name(),
+                    "decision": decision,
+                    "risk_score": risk_score,
+                },
+            )
+            return response
         except Exception as exc:  # noqa: BLE001 - fall back on any Gemini error
             logger.warning("Gemini decision narration başarısız, heuristik fallback: %s", exc)
 
+    logger.info(
+        "decision_agent.narration",
+        extra={
+            "event": "decision_agent.narration",
+            "path": "heuristic",
+            "decision": decision,
+            "risk_score": risk_score,
+        },
+    )
     return _build_heuristic(
         req, decision, risk_score, label,
         review=review, price=price, budget=budget, impulse=impulse,

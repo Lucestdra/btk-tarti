@@ -70,6 +70,14 @@ def run(req: AnalyzeRequest, *, force_refresh: bool = False) -> AgentResult:
     when the user explicitly asks to re-analyze.
     """
     if not req.reviews:
+        logger.info(
+            "review_agent.no_reviews",
+            extra={
+                "event": "review_agent.no_reviews",
+                "url": req.product.url[:120],
+                "page_review_count": req.product.reviewCount,
+            },
+        )
         return AgentResult(
             score=35,
             label="Yorum Verisi Yok",
@@ -79,11 +87,34 @@ def run(req: AnalyzeRequest, *, force_refresh: bool = False) -> AgentResult:
     client = get_client()
     if client is not None:
         try:
-            return _run_with_gemini(client, req, force_refresh=force_refresh)
+            result = _run_with_gemini(client, req, force_refresh=force_refresh)
+            logger.info(
+                "review_agent.verdict",
+                extra={
+                    "event": "review_agent.verdict",
+                    "path": "gemini",
+                    "model": get_model_name(),
+                    "score": result.score,
+                    "label": result.label,
+                    "reviews_seen": len(req.reviews),
+                },
+            )
+            return result
         except Exception as exc:  # noqa: BLE001 - fall back on any Gemini error
             logger.warning("Gemini çağrısı başarısız, heuristik fallback: %s", exc)
 
-    return _run_heuristic(req)
+    result = _run_heuristic(req)
+    logger.info(
+        "review_agent.verdict",
+        extra={
+            "event": "review_agent.verdict",
+            "path": "heuristic",
+            "score": result.score,
+            "label": result.label,
+            "reviews_seen": len(req.reviews),
+        },
+    )
+    return result
 
 
 # ---------- Gemini path ----------

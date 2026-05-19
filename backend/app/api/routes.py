@@ -120,7 +120,35 @@ def analyze_purchase(
     # it (proxy, CDN, browser) would mask those updates. Use the
     # in-process Gemini cache for legitimate replay protection instead.
     response.headers["Cache-Control"] = "no-store"
-    return analyze(payload, db=db, force_refresh=force_refresh)
+
+    user_prefix = (payload.userId[:12] + "…") if payload.userId and len(payload.userId) > 12 else (payload.userId or "?")
+    logger.info(
+        "analyze_purchase.request",
+        extra={
+            "event": "analyze_purchase.request",
+            "user": user_prefix,
+            "platform": payload.platform,
+            "url": payload.product.url[:120],
+            "title": (payload.product.title or "")[:80],
+            "price": payload.product.price,
+            "category_raw": (payload.product.category or "")[:40],
+            "review_count_attached": len(payload.reviews or []),
+            "price_history_attached": len(payload.priceHistory or []),
+            "has_user_budget_in_body": payload.userBudget is not None,
+            "force_refresh": force_refresh,
+        },
+    )
+    result = analyze(payload, db=db, force_refresh=force_refresh)
+    logger.info(
+        "analyze_purchase.response",
+        extra={
+            "event": "analyze_purchase.response",
+            "user": user_prefix,
+            "decision": result.decision,
+            "risk_score": result.riskScore,
+        },
+    )
+    return result
 
 
 @router.post(
@@ -394,11 +422,22 @@ def post_purchase(
     summary="Liveness probe",
     description=(
         "Process is up. Cheap; always 200 if the FastAPI worker can handle "
-        "a request at all. Use for load-balancer health checks."
+        "a request at all. The `gemini` field signals whether the review +"
+        " decision agents will actually call the LLM (true) or fall back to"
+        " the deterministic heuristic (false) — the extension popup pings"
+        " this so the user can verify their installation."
     ),
 )
 def health() -> dict:
-    return {"status": "ok", "service": "thundrly-backend"}
+    from app.agents._gemini_client import get_client, get_model_name
+
+    gemini_ready = get_client() is not None
+    return {
+        "status": "ok",
+        "service": "thundrly-backend",
+        "gemini": gemini_ready,
+        "geminiModel": get_model_name() if gemini_ready else None,
+    }
 
 
 @router.get(

@@ -84,22 +84,37 @@ function attachToButton(btn: HTMLElement) {
         // background-fetches /yorumlar if PDP scraping comes back empty.
         const request = await buildAnalyzeRequestAsync(host, { userId, session });
 
-        // Final-payload visibility — gated by the same debug flag as the
-        // extractor logs. Print the full shape so the user can confirm
-        // whether reviews + price + legal_min made it through before the
-        // request crosses the wire. Flip on with `window.__THUNDRLY_DEBUG = true`.
-        if ((window as unknown as Record<string, unknown>).__THUNDRLY_DEBUG) {
-          console.log("[Thundrly/req] outgoing AnalyzeRequest:", {
-            url: request.product.url,
-            title: request.product.title,
-            price: request.product.price,
-            originalPrice: request.product.originalPrice,
-            legalLowestPrice30d: request.product.legalLowestPrice30d,
-            category: request.product.category,
-            reviews: (request.reviews ?? []).length,
-            priceHistory: (request.priceHistory ?? []).length,
-            session: request.session,
-          });
+        // Always print the outgoing payload so the user can verify what
+        // we actually shipped — the most common bug reports ("price=0",
+        // "no reviews", "no budget") all become trivial to diagnose when
+        // this line is in the console. Tagged `[Thundrly]` so it's easy
+        // to filter alongside the per-agent logs the backend emits.
+        console.log("[Thundrly] AnalyzeRequest →", {
+          userId: request.userId,
+          platform: request.platform,
+          url: request.product.url,
+          title: request.product.title,
+          price: request.product.price,
+          originalPrice: request.product.originalPrice,
+          legalLowestPrice30d: request.product.legalLowestPrice30d,
+          category: request.product.category,
+          rating: request.product.rating,
+          reviewCount: request.product.reviewCount,
+          reviewsAttached: (request.reviews ?? []).length,
+          priceHistoryAttached: (request.priceHistory ?? []).length,
+          session: request.session,
+        });
+        if (request.product.price <= 0) {
+          console.warn(
+            "[Thundrly] price extraction returned 0 — analyze sonucu güvenilir olmayabilir. " +
+            "PDP'de değilsen panel zaten açılmamalıydı; PDP'desen platform selektörlerini güncellemek gerekebilir.",
+          );
+        }
+        if ((request.reviews ?? []).length === 0) {
+          console.warn(
+            "[Thundrly] reviews boş çıktı — `/yorumlar` fetch'i de düştü demek. " +
+            "Yorum ajanı 'Yorum Verisi Yok' diyecek.",
+          );
         }
 
         mountPanel({

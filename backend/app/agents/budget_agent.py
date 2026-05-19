@@ -11,9 +11,12 @@ TODO (PostgreSQL): Kullanıcı bütçesi ve harcama geçmişi DB'den gelmeli;
 
 from __future__ import annotations
 
+import logging
 from typing import List
 
 from app.models.schemas import AgentFinding, AgentResult, AnalyzeRequest
+
+logger = logging.getLogger(__name__)
 
 
 def _pct(n: float, d: float) -> int:
@@ -49,6 +52,7 @@ def _monthly_score(pct_after: int) -> int:
 
 
 def run(req: AnalyzeRequest) -> AgentResult:
+    user_prefix = (req.userId[:12] + "…") if req.userId and len(req.userId) > 12 else (req.userId or "?")
     if req.userBudget is None:
         # No budget rows for this user at all. The message names the
         # detected category so the user can compare it against what they
@@ -56,6 +60,15 @@ def run(req: AnalyzeRequest) -> AgentResult:
         # cause (e.g. budget set for "Elektronik" but extractor reported
         # "Sweatshirt").
         category = (req.product.category or "?").strip()
+        logger.info(
+            "budget_agent.miss",
+            extra={
+                "event": "budget_agent.miss",
+                "user": user_prefix,
+                "category_raw": category[:40],
+                "price": req.product.price,
+            },
+        )
         return AgentResult(
             score=0,
             label="Bütçe Verisi Yok",
@@ -156,4 +169,21 @@ def run(req: AnalyzeRequest) -> AgentResult:
     else:
         label = "Bütçe Aşımı"
 
+    logger.info(
+        "budget_agent.verdict",
+        extra={
+            "event": "budget_agent.verdict",
+            "user": user_prefix,
+            "category": req.product.category[:40],
+            "score": score,
+            "label": label,
+            "monthly_limit": b.monthlyLimit,
+            "monthly_spent": monthly_spent,
+            "monthly_after_pct": mon_pct,
+            "category_limit": b.categoryLimit,
+            "category_spent": b.categorySpent,
+            "category_after_pct": cat_pct,
+            "price": price,
+        },
+    )
     return AgentResult(score=score, label=label, findings=findings)

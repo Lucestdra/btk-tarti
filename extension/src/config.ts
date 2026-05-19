@@ -23,3 +23,4 @@ export const PURCHASE_URL = `${API_BASE}/api/purchases`;
 export const USER_BUDGETS_URL = `${API_BASE}/api/user-budgets`;
 export const USER_BUDGET_URL = `${API_BASE}/api/user-budget`;
 export const USER_BUDGET_GLOBAL_URL = `${API_BASE}/api/user-budget/global`;
+export const HEALTH_URL = `${API_BASE}/api/health`;
