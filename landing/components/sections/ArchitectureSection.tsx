@@ -45,10 +45,10 @@ const layers: LayerCard[] = [
     key: "landing",
     title: "Landing",
     subtitle: "Next.js 15 · App Router",
-    desc: "Tanıtım sayfası ve sentetik demo. Backend olmadan da çalışan canlı bir gösterim.",
+    desc: "Tanıtım sayfası ve canlı demo. Backend ulaşılamazsa fixture fallback ile çalışır.",
     Icon: Globe,
     bullets: [
-      "Sentetik fixture'lar (shared/demo)",
+      "Canlı backend bağlantısı (SSE stream)",
       "Framer Motion + Tailwind",
       "Statik SSR build (standalone)",
     ],
@@ -89,7 +89,7 @@ const moduleTrees = [
       { label: "app/", type: "dir", note: "Next.js App Router; / ve /mimari" },
       { label: "components/sections/", type: "dir", note: "Hero, Demo, Mimari, Footer" },
       { label: "components/demo/", type: "dir", note: "AgentFlow, ExtensionPanelMock, ProductPageMock" },
-      { label: "lib/runDemo.ts", type: "file", note: "Sentetik akış simülatörü" },
+      { label: "lib/runDemo.ts", type: "file", note: "Offline fallback akış simülatörü" },
       { label: "lib/streamAnalyze.ts", type: "file", note: "Backend SSE bağlantısı" },
       { label: "shared/demo/", type: "dir", note: "Backend yokken kullanılan fixture'lar" },
     ],
@@ -468,7 +468,7 @@ const securityPoints = [
   {
     title: "Anonim kullanıcı kimliği",
     Icon: Cpu,
-    desc: "MVP'de userId yereldir; e-posta veya kişisel bilgi backend'e iletilmez.",
+    desc: "userId yerelde üretilir; e-posta veya kişisel bilgi backend'e iletilmez.",
   },
 ];
 
@@ -479,39 +479,6 @@ const deployment = [
   { name: "thundrly-postgres", Icon: Database, desc: "postgres:16-alpine; sadece compose ağında erişilebilir." },
 ];
 
-const mockVsReal = [
-  {
-    dim: "Yorum analizi",
-    mock: "Jaccard token tekrar + jenerik ifade + burst",
-    real: "Gemini embeddings + DBSCAN + LLM özeti",
-  },
-  {
-    dim: "Fiyat geçmişi",
-    mock: "İstek payload'ındaki fiyat geçmişi",
-    real: "PriceObservation tablosu + Akakçe ikincil kaynak",
-  },
-  {
-    dim: "Bütçe",
-    mock: "Payload içinden çıkarılır",
-    real: "PostgreSQL user_budgets (PK uid+cat)",
-  },
-  {
-    dim: "Dürtü",
-    mock: "Sayfa süresi + tıklama hızı + saat",
-    real: "Davranışsal model + tarayıcı geçmişi (yerel)",
-  },
-  {
-    dim: "Orkestrasyon",
-    mock: "Senkron orchestrator.analyze()",
-    real: "LangGraph StateGraph; 4 paralel node, decision fan-in",
-  },
-  {
-    dim: "Yorum vektörleri",
-    mock: "Yok",
-    real: "pgvector + Gemini embeddings",
-  },
-];
-
 const principles = [
   {
     title: "Shadow DOM izolasyonu",
@@ -519,9 +486,9 @@ const principles = [
     desc: "Eklenti paneli host sayfanın CSS'inden tamamen izole; hiçbir e-ticaret stilinden etkilenmez.",
   },
   {
-    title: "Deterministik mock + canlı LLM",
+    title: "Canlı LLM + dayanıklılık",
     Icon: Cpu,
-    desc: "Demo modu Gemini olmadan tekrarlanabilir çıktı verir. Üretim modunda retry + circuit breaker arkasında.",
+    desc: "Gemini 2.5 Flash retry + circuit breaker arkasında çalışır; servis düşerse heuristik fallback devreye girer ve karar yine üretilir.",
   },
   {
     title: "Tek sözleşme, üç bileşen",
@@ -568,7 +535,7 @@ export function ArchitectureSection() {
               >
                 <li className="inline-flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-cerulean" />
-                  12 bölüm
+                  11 bölüm
                 </li>
                 <li className="inline-flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-cerulean" />
@@ -1109,60 +1076,9 @@ export function ArchitectureSection() {
         </div>
       </Container>
 
-      {/* ── 11 · Mock vs gerçek ──────────────────────────── */}
+      {/* ── 11 · Prensipler ──────────────────────────────── */}
       <SectionHeader
-        eyebrow="11 · Mock vs gerçek"
-        title={
-          <>
-            Demo ne yapıyor,{" "}
-            <span className="italic">üretim ne yapacak</span>.
-          </>
-        }
-        intro="Hackathon kapsamında deterministik mock'lar; üretim sprintinde her boyut canlı veri kaynağına bağlanıyor."
-      />
-      <Container>
-        <div className="card-elevated overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-line bg-bg-tertiary/30">
-                <th className="text-left px-5 py-3.5 text-[12px] kicker">Boyut</th>
-                <th className="text-left px-5 py-3.5 text-[12px] kicker">
-                  MVP (mock)
-                </th>
-                <th className="text-left px-5 py-3.5 text-[12px] kicker">
-                  Üretim (planlanan)
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockVsReal.map((row, i) => (
-                <motion.tr
-                  key={row.dim}
-                  initial={{ opacity: 0 }}
-                  whileInView={{ opacity: 1 }}
-                  viewport={viewportOnce}
-                  transition={{ delay: i * 0.04 }}
-                  className="border-b border-line/60 last:border-b-0"
-                >
-                  <td className="px-5 py-3.5 text-[13px] text-ink font-medium">
-                    {row.dim}
-                  </td>
-                  <td className="px-5 py-3.5 text-[13px] text-ink-soft">
-                    {row.mock}
-                  </td>
-                  <td className="px-5 py-3.5 text-[13px] text-ink-soft">
-                    {row.real}
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Container>
-
-      {/* ── 12 · Prensipler ──────────────────────────────── */}
-      <SectionHeader
-        eyebrow="12 · Prensipler"
+        eyebrow="11 · Prensipler"
         title={
           <>
             Neden{" "}
