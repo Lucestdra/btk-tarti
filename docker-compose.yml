@@ -87,6 +87,12 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      # İletişim formu — Resend ile mail gönderimi.
+      # .env dosyasından okunur; eksikse /api/contact 503 döner.
+      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY env var required}
+      MAIL_FROM: ${MAIL_FROM:-Thundrly <onboarding@resend.dev>}
+      CONTACT_TO: ${CONTACT_TO:-agdemirhalim4@gmail.com}
     ports:
       - "127.0.0.1:3000:3000"
     networks:
