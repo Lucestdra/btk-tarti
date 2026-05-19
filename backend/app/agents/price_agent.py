@@ -144,6 +144,22 @@ def run(req: AnalyzeRequest) -> AgentResult:
         # "Kısmi Manipülasyon" label (score 25-54) reads as a soft accusation
         # when the truth is we just don't have data. Return a neutral 0 so
         # this dimension contributes nothing to the weighted decision.
+        #
+        # Two flavors of "no data":
+        #  - Brand-new product, nothing on Akakçe either → "Fiyat Geçmişi Yok"
+        #  - We DO know the displayed price but have no comparison points →
+        #    "Tek Veri Noktası" (less alarming, more accurate framing)
+        if price > 0:
+            findings.append(
+                AgentFinding(
+                    severity="info",
+                    message=(
+                        f"Bu ürün için bağımsız fiyat geçmişi yok; gösterilen "
+                        f"₺{price:.0f} tek referans noktası."
+                    ),
+                )
+            )
+            return AgentResult(score=0, label="Tek Veri Noktası", findings=findings)
         findings.append(
             AgentFinding(severity="warn", message="Bu ürün için fiyat geçmişi bulunamadı; indirim doğrulanamadı.")
         )

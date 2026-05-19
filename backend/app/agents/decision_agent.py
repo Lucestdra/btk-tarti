@@ -56,6 +56,19 @@ SEVERITY_RANK = {"risk": 3, "warn": 2, "info": 1}
 # ---------- Deterministic decision (never LLM) ----------
 
 
+# Labels emitted by signal agents when they don't have enough input to
+# score honestly. The decision agent uses this set to detect "we're
+# voting on too little evidence" situations and damps its escalation
+# rule accordingly — better to land yellow with low confidence than red
+# with no evidence.
+_NO_DATA_LABELS = frozenset({
+    "Yorum Verisi Yok",
+    "Bütçe Verisi Yok",
+    "Fiyat Geçmişi Yok",
+    "Tek Veri Noktası",
+})
+
+
 def _compute_decision(
     review: AgentResult,
     price: AgentResult,
@@ -71,13 +84,26 @@ def _compute_decision(
     )
     risk_score = int(round(weighted))
 
-    # Eskalasyon: tek bir boyut yeterince yüksekse, ağırlıklı toplam düşük
-    # olsa bile kullanıcıyı en azından sarı/kırmızı seviyesinde uyar.
-    single_max = max(review.score, price.score, budget.score, impulse.score)
-    if single_max >= 80:
-        risk_score = max(risk_score, 70)
-    elif single_max >= 45:
-        risk_score = max(risk_score, 42)
+    # Low-data confidence damping. When 2+ of the 4 signal agents report
+    # "no data" (rather than a real score), the weighted sum is mostly
+    # noise from whatever agents DID fire. In that case:
+    #   - Skip the single-agent escalation entirely (one strong signal
+    #     can't be trusted against a near-empty evidence base).
+    #   - Cap the risk score at 55 (yellow band), since we genuinely
+    #     don't have enough to justify a confident red.
+    no_data_count = sum(
+        1 for a in (review, price, budget, impulse) if a.label in _NO_DATA_LABELS
+    )
+    if no_data_count >= 2:
+        risk_score = min(risk_score, 55)
+    else:
+        # Eskalasyon: tek bir boyut yeterince yüksekse, ağırlıklı toplam düşük
+        # olsa bile kullanıcıyı en azından sarı/kırmızı seviyesinde uyar.
+        single_max = max(review.score, price.score, budget.score, impulse.score)
+        if single_max >= 80:
+            risk_score = max(risk_score, 70)
+        elif single_max >= 45:
+            risk_score = max(risk_score, 42)
 
     risk_score = max(0, min(100, risk_score))
 

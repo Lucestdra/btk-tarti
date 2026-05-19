@@ -32,12 +32,17 @@ const STAGE_DONE_LABEL: Record<StageKey, string> = {
 };
 
 // Minimum time each stage stays "running" before transitioning to "done".
-// Without this, fast backends (no Gemini → <50ms total) make the panel flash.
-// With Gemini in play, real timing dominates and these floors are no-ops.
-const STAGE_MIN_RUNNING_MS = 280;
-// Minimum baseline duration before transitioning to result; ensures the panel
-// always feels like "5 saniyelik" analiz even if every node completed instantly.
-const MIN_TOTAL_MS = 1800;
+// Was 280ms (artificial). Reliability sprint: dropped to 60ms — just
+// enough to avoid the panel flickering when nodes complete in <16ms
+// (single React-paint), without inventing fake work. If reviews take
+// 4 seconds to actually fetch, the user sees 4 real seconds of progress.
+const STAGE_MIN_RUNNING_MS = 60;
+// Minimum baseline duration before transitioning to result. Was 1800ms
+// artificial pacing to feel like "5 saniyelik kontrol". Reliability
+// sprint: 0 — show honest progress. The extension's real review
+// extraction now takes 2-5s on first-visit products, so the analysis
+// naturally fills the same perceived duration without lying.
+const MIN_TOTAL_MS = 0;
 
 const decisionToneClass: Record<Decision, string> = {
   green: "green",

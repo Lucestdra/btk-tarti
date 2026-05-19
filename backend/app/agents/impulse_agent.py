@@ -2,14 +2,19 @@
 Dürtü Agenti — kararın planlı mı yoksa dürtüsel mi olduğunu tahmin eder.
 
 Sinyaller (toplam 100 üstü kapanır):
-  - Ürün sayfasında çok az süre geçti (< 30s): +30
-  - Tıklama çok hızlı (< 800 ms): +20
+  - Ürün sayfasında çok az süre geçti (< 8s): +30
+  - Tıklama anormal hızlı (< 60 ms, sentetik): +20
   - Geç saat (22–06): +20
   - Aynı gün içinde 2+ satın alma: +30
   - Ürünü daha önce aratmış → -25 (planlı sinyali)
 
-TODO (Gemini + davranışsal model): Klikstream + ürün gezinti geçmişi
-ile gerçek dürtü skorlaması yap. LangGraph node: `impulse_node`.
+Eşik notları (Mayıs 2026 ayarlamaları):
+  - timeOnPage 30s → 8s: gerçek bir kullanıcı 30 saniye boyunca ürün
+    incelemeden satın almıyor olabilir; ama "dürtüsel" çağrısı 30 sn
+    eşiğinde abartılı oluyordu. 8 sn bilinçli düşünme için bile dar.
+  - clickSpeedMs 800ms → 60ms: insanın mousedown→click süresi tipik
+    olarak 80–250 ms; 800 ms eşiği her gerçek tıklamayı flagliyordu.
+    60 ms = senkron/programatik tıklama (örn. otomatik form doldurma).
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ def run(req: AnalyzeRequest) -> AgentResult:
     findings: List[AgentFinding] = []
     score = 0
 
-    if s.timeOnPageSeconds < 30:
+    if s.timeOnPageSeconds < 8:
         score += 30
         findings.append(
             AgentFinding(
@@ -33,12 +38,12 @@ def run(req: AnalyzeRequest) -> AgentResult:
             )
         )
 
-    if s.clickSpeedMs < 800:
+    if s.clickSpeedMs < 60:
         score += 20
         findings.append(
             AgentFinding(
                 severity="warn",
-                message=f"Sepete ekleme tıklaması çok hızlı ({int(s.clickSpeedMs)} ms).",
+                message=f"Tıklama anormal hızlı ({int(s.clickSpeedMs)} ms) — otomatik form sinyali olabilir.",
             )
         )
 

@@ -184,6 +184,39 @@ chrome.runtime.onMessage.addListener((msg: IncomingMessage, sender, sendResponse
 
 const REVIEW_PAGE_CAP = 100;       // hard cap on reviews per product
 const REVIEW_PAGE_LIMIT = 5;       // hard cap on pagination depth
+const REVIEW_FETCH_TIMEOUT_MS = 10_000; // per-page fetch timeout (was 3s implicit)
+
+async function fetchWithRetry(url: string, attempts = 2): Promise<Response | null> {
+  // One retry on transient failures (timeout, network error, 5xx).
+  // Skips retry on 4xx — those are deterministic.
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REVIEW_FETCH_TIMEOUT_MS);
+      const r = await fetch(url, {
+        headers: {
+          // Look like a real browser navigation so the server returns
+          // the populated HTML rather than a minimal SPA skeleton.
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
+          "accept-language": "tr-TR,tr;q=0.9,en;q=0.8",
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (r.ok) return r;
+      // 4xx → deterministic, don't retry. 5xx → fall through to retry.
+      if (r.status >= 400 && r.status < 500) return null;
+    } catch (err) {
+      if (attempt === attempts) {
+        console.warn(`[Thundrly] review fetch failed after ${attempts} attempts:`, err);
+        return null;
+      }
+      // Short backoff before the second attempt.
+      await new Promise((res) => setTimeout(res, 400));
+    }
+  }
+  return null;
+}
 
 async function fetchAndParseReviews(url: string, host: Host): Promise<Review[]> {
   // Trendyol + Hepsiburada paginate their review subpages; walk them up
@@ -196,15 +229,8 @@ async function fetchAndParseReviews(url: string, host: Host): Promise<Review[]> 
   const seen = new Set<string>();
   for (let page = 1; page <= REVIEW_PAGE_LIMIT; page++) {
     const pageUrl = appendReviewPageParam(url, host, page);
-    const r = await fetch(pageUrl, {
-      headers: {
-        // Look like a real browser navigation so the server returns the
-        // populated HTML rather than a minimal SPA skeleton.
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
-        "accept-language": "tr-TR,tr;q=0.9,en;q=0.8",
-      },
-    });
-    if (!r.ok) break;
+    const r = await fetchWithRetry(pageUrl);
+    if (!r) break;
     const html = await r.text();
     const batch = host === "trendyol" ? parseTrendyolReviews(html) : parseHepsiburadaReviews(html);
     if (batch.length === 0) break;

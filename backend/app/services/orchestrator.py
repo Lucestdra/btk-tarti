@@ -30,7 +30,7 @@ from app.services.user_budget import (
     get_strict as get_budget_strict,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("thundrly.orchestrator")
 
 # Classifier confidence at or above which we trust the normalized
 # category enough to look it up in user_budgets. Below this threshold we
@@ -50,15 +50,32 @@ def analyze(
     #   3. External source (Akakçe scrape, last 30d) — only when the
     #      first two miss, so we don't pay the network cost for products
     #      we already know about.
+    price_source = "body" if req.priceHistory else "none"
     if not req.priceHistory and req.product.url and db is not None:
         fetched = get_recent(db, req.product.url, days=90)
         if fetched:
             req = req.model_copy(update={"priceHistory": fetched})
+            price_source = "db"
 
     if not req.priceHistory and req.product.title:
         external = fetch_external_history(req.product.title)
         if external:
             req = req.model_copy(update={"priceHistory": external})
+            price_source = "akakce"
+
+    logger.info(
+        "analyze.start",
+        extra={
+            "event": "analyze.start",
+            "url": req.product.url[:120],
+            "price_source": price_source,
+            "history_points": len(req.priceHistory or []),
+            "review_count": len(req.reviews or []),
+            "has_legal_min": req.product.legalLowestPrice30d is not None,
+            "has_original_price": req.product.originalPrice is not None,
+            "category_raw": req.product.category[:40],
+        },
+    )
 
     # User budget resolution — hybrid model.
     #

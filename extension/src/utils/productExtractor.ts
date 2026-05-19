@@ -561,26 +561,57 @@ export function extractReviews(host: Host, root: ParentNode = document): Review[
  * Async review extraction that scroll-triggers lazy widgets on Trendyol /
  * Hepsiburada / N11 before scraping.
  *
- * Strategy:
- *   1. Try a synchronous extract first — fast path for already-rendered widgets.
- *   2. If empty, scroll the most likely review section into view (heuristic
- *      anchors like "Yorumlar" headers or known review container classes),
- *      wait `lazyWaitMs` for the lazy loader to commit, then re-extract.
- *   3. If still empty, the caller can opt to background-fetch /yorumlar
- *      via `requestReviewsFromBackground`.
+ * Strategy (May-2026 hardening):
+ *   1. Synchronous extract — fast path for already-rendered widgets.
+ *   2. If empty: scroll the most likely review section into view, also
+ *      dispatch a synthetic wheel event (Trendyol's lazy loader gates
+ *      on IntersectionObserver + scroll-velocity, not just visibility).
+ *   3. Use a MutationObserver to **resolve as soon as review nodes appear**
+ *      under the platform's review container — typically 200–800ms when
+ *      the widget loads, but we wait up to `maxWaitMs` (default 3500ms)
+ *      before giving up. Fast on responsive pages, patient on slow ones.
+ *   4. Second pass: if still empty after the first settle, scroll the
+ *      anchor again and wait once more — some loaders need two ticks.
+ *   5. Always restore the scroll position so the user doesn't see jump.
+ *
+ * The change from "fixed 800ms sleep" to "observer-with-deadline" is the
+ * biggest reliability win on this path: we no longer give up early when
+ * a slow lazy loader needs ~1500ms, and we no longer wait the full 800ms
+ * unnecessarily on a page that loaded reviews in 200ms.
  *
  * Honors `cap` from the per-platform selector pack.
  */
-export async function extractReviewsAsync(host: Host, lazyWaitMs = 800): Promise<Review[]> {
+export async function extractReviewsAsync(
+  host: Host,
+  maxWaitMs = 3500,
+): Promise<Review[]> {
   // Fast path.
   let reviews = extractReviews(host);
   if (reviews.length > 0) return reviews;
 
-  // Try to trigger lazy loading by scrolling a plausible review anchor
-  // into view. Anchors are platform-agnostic so the same logic works
-  // across our 21 hosts.
-  const anchorCandidates = [
-    // Headings whose text mentions reviews (most reliable).
+  const anchor = _findReviewAnchor();
+  if (!anchor) return reviews;
+
+  const prevY = window.scrollY;
+  try {
+    // First settle pass.
+    reviews = await _scrollSettleAndExtract(host, anchor, maxWaitMs);
+    if (reviews.length > 0) return reviews;
+
+    // Second pass — some lazy loaders need a second scroll tick. Wait
+    // longer this time since the first pass already exhausted the easy
+    // case. The extra ~2s of work is the explicit reliability/latency
+    // trade-off the user signed off on.
+    reviews = await _scrollSettleAndExtract(host, anchor, maxWaitMs);
+  } finally {
+    window.scrollTo({ top: prevY, behavior: "auto" });
+  }
+  return reviews;
+}
+
+function _findReviewAnchor(): HTMLElement | null {
+  const candidates: (HTMLElement | null)[] = [
+    // Headings whose text mentions reviews (most reliable across hosts).
     ...Array.from(document.querySelectorAll<HTMLElement>("h2, h3, h4")).filter((el) =>
       /yorum|değerlendirme|review/i.test(el.textContent || ""),
     ),
@@ -590,22 +621,52 @@ export async function extractReviewsAsync(host: Host, lazyWaitMs = 800): Promise
     document.querySelector<HTMLElement>(".reviews-section"),
     document.querySelector<HTMLElement>(".pr-rnr-w"),
     document.querySelector<HTMLElement>(".comments"),
+    document.querySelector<HTMLElement>(".product-detail-review"),
   ].filter((el): el is HTMLElement => el != null);
+  return candidates[0] ?? null;
+}
 
-  const anchor = anchorCandidates[0];
-  if (anchor) {
-    const prevY = window.scrollY;
-    try {
-      anchor.scrollIntoView({ block: "center", behavior: "auto" });
-      await new Promise((r) => setTimeout(r, lazyWaitMs));
-      reviews = extractReviews(host);
-    } finally {
-      // Restore scroll position so the user doesn't see the page jump.
-      window.scrollTo({ top: prevY, behavior: "auto" });
+async function _scrollSettleAndExtract(
+  host: Host,
+  anchor: HTMLElement,
+  maxWaitMs: number,
+): Promise<Review[]> {
+  // Trigger the lazy loader: scroll the anchor + dispatch a synthetic
+  // wheel event so IntersectionObserver + velocity-gated loaders both fire.
+  anchor.scrollIntoView({ block: "center", behavior: "auto" });
+  anchor.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 200 }));
+
+  // Resolve as soon as ANY review container shows up.
+  return new Promise<Review[]>((resolve) => {
+    const tryExtract = () => extractReviews(host);
+
+    // Maybe it loaded synchronously between scroll and observer setup.
+    let reviews = tryExtract();
+    if (reviews.length > 0) {
+      resolve(reviews);
+      return;
     }
-  }
 
-  return reviews;
+    let done = false;
+    const finish = (r: Review[]) => {
+      if (done) return;
+      done = true;
+      observer.disconnect();
+      clearTimeout(timer);
+      resolve(r);
+    };
+
+    const observer = new MutationObserver(() => {
+      reviews = tryExtract();
+      if (reviews.length > 0) finish(reviews);
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+
+    const timer = window.setTimeout(() => finish(tryExtract()), maxWaitMs);
+  });
 }
 
 /**

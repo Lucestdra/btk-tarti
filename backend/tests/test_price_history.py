@@ -157,22 +157,23 @@ def test_analyze_falls_back_to_db_when_body_history_empty(client, db):
     assert all("fiyat geçmişi bulunamadı" not in f["message"] for f in price_agent["findings"])
 
 
-def test_analyze_emits_no_history_warning_when_db_empty(client, monkeypatch):
+def test_analyze_emits_single_point_label_when_db_empty(client, monkeypatch):
     # The orchestrator's external fallback (Akakçe) is mocked off so this
     # test sees the genuinely-empty path the way fresh users would on a
-    # product that's never been seen anywhere.
+    # product that's never been seen anywhere. The displayed price is
+    # known, so the agent surfaces it as "Tek Veri Noktası" (one
+    # reference point) rather than the more alarming "Fiyat Geçmişi Yok".
     from app.services import external_price_history
     monkeypatch.setattr(external_price_history, "ENABLED", False)
 
     r = client.post("/api/analyze-purchase", json=_payload_no_history("https://www.trendyol.com/unseen-p-1"))
     assert r.status_code == 200
     price_agent = r.json()["agents"]["priceAgent"]
-    # New behaviour: neutral score (0) + honest label "Fiyat Geçmişi Yok"
-    # rather than a mid-tier "Kısmi Manipülasyon" + score 45 that reads
-    # like a soft accusation when we simply have no data.
+    # Neutral score (0) with a less-alarming framing — we DO know the
+    # current price, we just have nothing to compare it to yet.
     assert price_agent["score"] == 0
-    assert price_agent["label"] == "Fiyat Geçmişi Yok"
-    assert any("fiyat geçmişi bulunamadı" in f["message"] for f in price_agent["findings"])
+    assert price_agent["label"] == "Tek Veri Noktası"
+    assert any("tek referans" in f["message"].lower() for f in price_agent["findings"])
 
 
 # ---------- Median collapses daily duplicates and absorbs poison ----------

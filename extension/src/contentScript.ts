@@ -67,6 +67,19 @@ function attachToButton(btn: HTMLElement) {
           // flush.
           new Promise((r) => setTimeout(r, 120)),
         ]);
+
+        // Pre-flight: fire the price observation AND wait briefly for
+        // its ack BEFORE the analyze request goes out. Without this,
+        // first-time visits land in the backend with an empty DB and
+        // the price_agent reports "Fiyat Geçmişi Yok". The page-load
+        // debounce can lose the race when the user clicks Sepete Ekle
+        // within ~400ms of arriving. 1.5s is the upper bound; we
+        // fire-and-forget if the network is slower than that.
+        await Promise.race([
+          sendObservationNow(),
+          new Promise((r) => setTimeout(r, 1500)),
+        ]);
+
         // Async build: scroll-triggers lazy review widgets and
         // background-fetches /yorumlar if PDP scraping comes back empty.
         const request = await buildAnalyzeRequestAsync(host, { userId, session });
@@ -144,6 +157,31 @@ function sendObservationIfNew() {
   chrome.runtime
     .sendMessage({ type: "priceObservation", payload })
     .catch((e) => console.warn("[Thundrly] price observation gönderilemedi:", e));
+}
+
+/**
+ * Synchronous-style observation send for the pre-flight path before
+ * analyze fires. Returns a promise that resolves once the backend has
+ * stored the observation (or immediately, if there's nothing to send).
+ *
+ * Unlike `sendObservationIfNew`, this awaits the round-trip — the
+ * caller is expected to race it against a short timeout so a slow
+ * network doesn't add unbounded latency to the panel.
+ */
+async function sendObservationNow(): Promise<void> {
+  const url = location.href;
+  const payload = extractCurrentObservation(host);
+  if (!payload) return;
+
+  // Mark sent even before the await so the page-load debounce doesn't
+  // duplicate. Worst case the network call fails and we retry on the
+  // next SPA-nav; never worse than today's behavior.
+  observedUrlsThisSession.add(url);
+  try {
+    await chrome.runtime.sendMessage({ type: "priceObservation", payload });
+  } catch (e) {
+    console.warn("[Thundrly] pre-flight observation gönderilemedi:", e);
+  }
 }
 
 function scheduleObservation() {
