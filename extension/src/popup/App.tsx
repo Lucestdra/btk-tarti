@@ -18,18 +18,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getInstallId } from "@/utils/installId";
-import { HEALTH_URL, USER_BUDGETS_URL, USER_BUDGET_GLOBAL_URL, USER_BUDGET_URL } from "@/config";
+import { USER_BUDGETS_URL, USER_BUDGET_GLOBAL_URL, USER_BUDGET_URL } from "@/config";
 import { LogoMark } from "@/components/LogoMark";
-
-interface HealthStatus {
-  online: boolean;
-  gemini?: boolean;
-  geminiModel?: string | null;
-  llmProvider?: string | null;
-  llmModel?: string | null;
-  llmReady?: boolean;
-  error?: string;
-}
 
 interface CategoryBudget {
   category: string;
@@ -52,30 +42,6 @@ interface EditableCategory extends CategoryBudget {
 
 // Common Turkish e-commerce categories — used as quick-add suggestions.
 const SUGGESTED_CATEGORIES = ["Giyim", "Elektronik", "Market", "Kitap", "Ev", "Kozmetik", "Spor"];
-
-async function pingHealth(): Promise<HealthStatus> {
-  try {
-    const r = await fetch(HEALTH_URL, { cache: "no-store" });
-    if (!r.ok) return { online: false, error: `HTTP ${r.status}` };
-    const data = (await r.json()) as {
-      gemini?: boolean;
-      geminiModel?: string | null;
-      llmProvider?: string | null;
-      llmModel?: string | null;
-      llmReady?: boolean;
-    };
-    return {
-      online: true,
-      gemini: !!data.gemini,
-      geminiModel: data.geminiModel ?? null,
-      llmProvider: data.llmProvider ?? null,
-      llmModel: data.llmModel ?? null,
-      llmReady: !!data.llmReady,
-    };
-  } catch (e) {
-    return { online: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
 
 function formatTRY(amount: number): string {
   return new Intl.NumberFormat("tr-TR", {
@@ -115,7 +81,6 @@ export function App() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [health, setHealth] = useState<HealthStatus | null>(null);
   const monthlyInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async (uid: string) => {
@@ -144,9 +109,6 @@ export function App() {
       // content script — mismatching installIds is the #1 cause of
       // "Bütçe Verisi Yok" after a budget save.
       console.log(`[Thundrly/popup] installId=${uid}`);
-      // Backend health probe runs in parallel with the budget fetch so the
-      // popup footer can show whether Gemini is actually wired in.
-      void pingHealth().then(setHealth);
       await refresh(uid);
     })();
   }, [refresh]);
@@ -404,54 +366,6 @@ export function App() {
         Ayın başında otomatik sıfırlanır.
       </p>
 
-      <DiagnosticsRow userId={userId} health={health} summary={summary} />
-    </div>
-  );
-}
-
-function DiagnosticsRow({
-  userId,
-  health,
-  summary,
-}: {
-  userId: string | null;
-  health: HealthStatus | null;
-  summary: BudgetSummary | null;
-}) {
-  // Show a short installId fingerprint + backend/Gemini status so the user
-  // can immediately spot two of the most common misconfigurations:
-  //   - popup saving budget under a different installId than the content
-  //     script sends (would manifest as "Bütçe Verisi Yok" after save)
-  //   - backend reachable but GEMINI_API_KEY missing (review + decision
-  //     fall back to heuristics, which the user may misread as a bug)
-  const idTag = userId ? userId.slice(0, 8) : "—";
-  let backendDot: "ok" | "warn" | "err" = "warn";
-  let backendLabel = "Sunucu yoklanıyor…";
-  if (health) {
-    if (!health.online) { backendDot = "err"; backendLabel = `Sunucu yok (${health.error || "?"})`; }
-    else if (health.llmReady || health.gemini) {
-      backendDot = "ok";
-      const provider = health.llmProvider === "openrouter" ? "OpenRouter" : "Gemini";
-      backendLabel = `${provider} açık · ${health.llmModel || health.geminiModel || ""}`;
-    }
-    else { backendDot = "warn"; backendLabel = "Sunucu açık · LLM KAPALI (heuristik mod)"; }
-  }
-  // Surface the actual persisted monthly limit the backend returned on
-  // last refresh. If it's 0 here even though the user "saved" a budget,
-  // the PUT didn't land on this userId — most likely an installId
-  // mismatch with the content-script's analyze request.
-  const persistedLine =
-    summary && summary.monthlyLimit > 0
-      ? `Kayıtlı: ₺${summary.monthlyLimit.toLocaleString("tr-TR")} / ay`
-      : "Kayıtlı bütçe yok";
-  return (
-    <div className="pop-diag-wrap" title={userId ?? undefined}>
-      <div className="pop-diag">
-        <span className={`pop-diag-dot pop-diag-${backendDot}`} />
-        <span className="pop-diag-label">{backendLabel}</span>
-        <span className="pop-diag-id">ID·{idTag}</span>
-      </div>
-      <div className="pop-diag-sub">{persistedLine}</div>
     </div>
   );
 }

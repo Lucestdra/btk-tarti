@@ -17,6 +17,13 @@ beforeEach(() => {
   document.body.innerHTML = "";
 });
 
+describe("parseRating", () => {
+  it("parses both Turkish out-of-5 word orders", () => {
+    expect(parseRating("5 yıldız üzerinden 4,5")).toBeCloseTo(4.5);
+    expect(parseRating("4,5 üzerinden 5 yıldız")).toBeCloseTo(4.5);
+  });
+});
+
 // ---------- JSON-LD ----------
 
 describe("extractProductBasics — JSON-LD", () => {
@@ -156,6 +163,28 @@ describe("extractProductBasics — platform selectors", () => {
     expect(out.title).toBe("N11 Book");
     expect(out.price).toBe(145);
     expect(out.originalPrice).toBe(180);
+  });
+
+  it("Amazon: visible rating beats stale rounded JSON-LD rating", () => {
+    document.head.innerHTML = `
+      <script type="application/ld+json">
+        ${JSON.stringify({
+          "@type": "Product",
+          name: "Amazon Bottle",
+          offers: { price: "1590.43" },
+          aggregateRating: { ratingValue: "5", reviewCount: "349" },
+        })}
+      </script>
+    `;
+    document.body.innerHTML = `
+      <span id="productTitle">Amazon Bottle</span>
+      <span id="acrPopover"><span class="a-icon-alt">5 yıldız üzerinden 4,5</span></span>
+      <span id="acrCustomerReviewText">349 değerlendirme</span>
+    `;
+
+    const out = extractProductBasics("amazon");
+    expect(out.rating).toBeCloseTo(4.5);
+    expect(out.reviewCount).toBe(349);
   });
 });
 

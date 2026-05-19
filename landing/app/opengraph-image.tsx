@@ -8,7 +8,7 @@
 
 import { ImageResponse } from "next/og";
 
-export const runtime = "nodejs";
+export const runtime = "edge";
 export const alt =
   "Thundrly — Satın almadan önce 5 saniyelik akıllı kontrol";
 export const size = { width: 1200, height: 630 };
@@ -45,17 +45,33 @@ export default function Image() {
               width: "72px",
               height: "72px",
               borderRadius: "18px",
-              background: "#007ea7",
+              background: "#f7fbfb",
+              border: "1px solid rgba(0, 50, 73, 0.12)",
               color: "#003249",
-              fontSize: "44px",
-              fontWeight: 800,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              letterSpacing: "-0.04em",
             }}
           >
-            T
+            <svg width="52" height="52" viewBox="0 0 40 40" fill="none">
+              {[9, 16.5, 23.5, 31].map((y) => (
+                <line
+                  key={`l-${y}`}
+                  x1="11.5"
+                  y1={y}
+                  x2="29"
+                  y2="20"
+                  stroke="currentColor"
+                  strokeOpacity="0.32"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                />
+              ))}
+              {[9, 16.5, 23.5, 31].map((y) => (
+                <circle key={`d-${y}`} cx="11" cy={y} r="2.1" fill="currentColor" />
+              ))}
+              <circle cx="29" cy="20" r="5" fill="#007ea7" />
+            </svg>
           </div>
           <div style={{ fontSize: "44px", fontWeight: 500, color: "#003249" }}>
             Thundrly

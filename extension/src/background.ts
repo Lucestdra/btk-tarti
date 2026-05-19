@@ -465,9 +465,9 @@ function parseHepsiburadaReviews(html: string): Review[] {
     const card = m[0];
     const text = stripTags(card.match(textRe)?.[1] || "").trim();
     if (!text) continue;
-    const rating = parseFloat(card.match(rateRe)?.[1] || "5");
+    const rating = parseRatingText(card.match(rateRe)?.[1] || "5") ?? 5;
     const date = stripTags(card.match(dateRe)?.[1] || "").trim();
-    out.push({ rating: Number.isFinite(rating) ? rating : 5, text, date });
+    out.push({ rating, text, date });
     if (out.length >= REVIEW_PAGE_CAP) break;
   }
   return out;
@@ -525,7 +525,7 @@ function parseAmazonReviews(html: string): Review[] {
   while ((m = cardRe.exec(html)) !== null) {
     const card = m[1];
 
-    // Rating: appears as <i data-hook="review-star-rating">…<span class="a-icon-alt">4,0 üzerinden 5,0 yıldız</span>…</i>
+    // Rating: appears as <i data-hook="review-star-rating">…<span class="a-icon-alt">5 yıldız üzerinden 4,0</span>…</i>
     // We pull the first numeric in the alt text and clamp to 0..5.
     const ratingMatch = card.match(
       /data-hook="(?:review-star-rating|cmps-review-star-rating)"[^>]*>([\s\S]*?)<\/i>/,
@@ -533,11 +533,7 @@ function parseAmazonReviews(html: string): Review[] {
     let rating = 0;
     if (ratingMatch) {
       const alt = stripTags(ratingMatch[1]);
-      const firstNum = alt.match(/(\d+(?:[.,]\d+)?)/);
-      if (firstNum) {
-        const n = parseFloat(firstNum[1].replace(",", "."));
-        if (Number.isFinite(n) && n >= 0 && n <= 5) rating = n;
-      }
+      rating = parseRatingText(alt) ?? 0;
     }
     if (rating === 0) continue;
 
@@ -587,6 +583,34 @@ function parseAmazonReviews(html: string): Review[] {
 
 function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+}
+
+function parseRatingText(raw: string): number | undefined {
+  const text = raw.trim();
+  if (!text) return undefined;
+  const patterns = [
+    /(\d+(?:[.,]\d+)?)\s*(?:yıldız\s*)?üzerinden\s*5(?:[.,]0)?/i,
+    /(?<![\d.,])5(?:[.,]0)?\s*(?:yıldız\s*)?üzerinden\s+(\d+(?:[.,]\d+)?)/i,
+    /\büzerinden\s+([0-4](?:[.,]\d+)?)/i,
+    /(\d+(?:[.,]\d+)?)\s*\/\s*5\b/,
+    /(\d+(?:[.,]\d+)?)\s*out of\s*5\b/i,
+    /(\d+(?:[.,]\d+)?)\s*yıldız/i,
+  ];
+  for (const re of patterns) {
+    const hit = text.match(re);
+    if (!hit) continue;
+    const n = parseFloat(hit[1].replace(",", "."));
+    if (Number.isFinite(n) && n >= 0 && n <= 5) return n;
+  }
+  const candidates: number[] = [];
+  const numRe = /(\d+(?:[.,]\d+)?)/g;
+  let m: RegExpExecArray | null;
+  while ((m = numRe.exec(text)) !== null) {
+    const n = parseFloat(m[1].replace(",", "."));
+    if (Number.isFinite(n) && n >= 0 && n <= 5) candidates.push(n);
+  }
+  if (candidates.length === 0) return undefined;
+  return candidates.find((n) => n < 5) ?? candidates[0];
 }
 
 // ----------------------------------------------------------------

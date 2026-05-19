@@ -58,6 +58,22 @@ GENERIC_PHRASES = (
     "tam istediğim gibi",
 )
 
+ABSTRACT_PREFIX = "Son yorum özeti:"
+
+POSITIVE_THEMES = {
+    "kalite": ("kalite", "kaliteli", "sağlam", "dayanıklı"),
+    "teslimat": ("hızlı kargo", "hızlı teslimat", "çabuk geldi", "erken geldi"),
+    "memnuniyet": ("beğendim", "memnun", "güzel", "iyi", "tavsiye"),
+    "kullanım": ("kullanışlı", "rahat", "pratik", "işe yarıyor"),
+}
+
+NEGATIVE_THEMES = {
+    "kalite sorunu": ("kalitesiz", "kötü", "bozuk", "kırık", "hasarlı", "defolu"),
+    "teslimat sorunu": ("geç geldi", "kargo kötü", "paketleme", "ezilmiş"),
+    "beklenti farkı": ("beklediğim gibi değil", "küçük", "büyük", "uymadı", "iade"),
+    "performans": ("akıt", "sızdır", "ısıtm", "soğutm", "çalışmıyor", "sorun"),
+}
+
 
 # ---------- Public entry point ----------
 
@@ -259,7 +275,7 @@ def _run_with_llm(client: LLMClient, req: AnalyzeRequest, *, force_refresh: bool
     if not force_refresh:
         cached = gemini_cache.get(cache_key)
         if cached is not None:
-            return cached
+            return _with_review_abstract(cached, req.reviews)
 
     # Compute the trust summary first so the prompt can cite it; if the
     # LLM is unreachable we already have a fully-formed heuristic
@@ -285,6 +301,7 @@ def _run_with_llm(client: LLMClient, req: AnalyzeRequest, *, force_refresh: bool
         )
 
     findings = [AgentFinding(severity=f.severity, message=f.message) for f in verdict.findings]
+    findings = _add_review_abstract(findings, req.reviews)
     # Always append the headline trust signal even if Gemini missed it —
     # downstream UI / decision_agent rely on a deterministic trust line.
     # Tag it as `lowReviewTrust` when trust score < 30 so the decision
@@ -437,11 +454,66 @@ def _compute_trust_summary(reviews: List[Review]) -> dict:
     }
 
 
+def _theme_hits(reviews: List[Review], themes: dict[str, tuple[str, ...]]) -> list[str]:
+    joined = " ".join(r.text.lower() for r in reviews)
+    hits = [name for name, needles in themes.items() if any(n in joined for n in needles)]
+    return hits[:3]
+
+
+def _clean_snippet(text: str, limit: int = 72) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _build_review_abstract_finding(reviews: List[Review]) -> AgentFinding | None:
+    if not reviews:
+        return None
+
+    sample = reviews[:10]
+    avg = sum(r.rating for r in sample) / len(sample)
+    positives = _theme_hits(sample, POSITIVE_THEMES)
+    negatives = _theme_hits(sample, NEGATIVE_THEMES)
+
+    parts = [f"{ABSTRACT_PREFIX} son {len(sample)} yorum ortalaması {avg:.1f}/5"]
+    if positives:
+        parts.append("öne çıkan olumlu temalar: " + ", ".join(positives))
+    if negatives:
+        parts.append("olumsuz sinyaller: " + ", ".join(negatives))
+
+    examples = [_clean_snippet(r.text) for r in sample[:2] if r.text.strip()]
+    if examples:
+        parts.append("örnek notlar: " + " / ".join(examples))
+
+    return AgentFinding(
+        severity="info" if avg >= 4.0 else "warn",
+        message="; ".join(parts) + ".",
+    )
+
+
+def _add_review_abstract(findings: List[AgentFinding], reviews: List[Review]) -> List[AgentFinding]:
+    if any(f.message.startswith(ABSTRACT_PREFIX) for f in findings):
+        return findings
+    abstract = _build_review_abstract_finding(reviews)
+    if abstract is None:
+        return findings
+    return [*findings, abstract]
+
+
+def _with_review_abstract(result: AgentResult, reviews: List[Review]) -> AgentResult:
+    return AgentResult(
+        score=result.score,
+        label=result.label,
+        findings=_add_review_abstract(list(result.findings), reviews),
+    )
+
+
 def _run_heuristic(req: AnalyzeRequest) -> AgentResult:
     reviews: List[Review] = req.reviews
     n = len(reviews)
     summary = _compute_trust_summary(reviews)
-    findings: List[AgentFinding] = []
+    findings: List[AgentFinding] = _add_review_abstract([], reviews)
 
     # Manipulation score = inverted trust + a few targeted bumps that the
     # trust score by itself wouldn't capture.

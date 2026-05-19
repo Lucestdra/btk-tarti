@@ -77,8 +77,8 @@ extension/
   fiyat, kategori için JSON-LD ve OG meta'ya güveniyor. Yorumlar, fiyat geçmişi
   ve kullanıcı bütçesi sentetik fixture'dan geliyor — gerçek üretimde bunlar
   arka uçtan / kullanıcı oturumundan gelmeli.
-- **İkonlar**: `public/icons/` boş. Eklenti varsayılan Chrome ikonuyla yüklenir.
-  `public/icons/README.md` üretim adımlarını listeler.
+- **İkonlar**: `public/icons/` panel logosuyla aynı markayı kullanır.
+  Yeniden üretmek için `npm run icons:build`.
 
 ## Manifest Eşleştirmeleri
 

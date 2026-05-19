@@ -230,6 +230,12 @@ export function App({ request, onContinue, onPause, onClose }: PanelProps) {
   }, [request]);
 
   const tone = useMemo(() => (result ? decisionToneClass[result.decision] : "red"), [result]);
+  const reviewAbstract = useMemo(() => {
+    const message = result?.agents.reviewAgent.findings?.find((f) =>
+      f.message.startsWith("Son yorum özeti:"),
+    )?.message;
+    return message?.replace(/^Son yorum özeti:\s*/, "") ?? null;
+  }, [result]);
   // location.href is stable for the panel's lifetime — the SPA-nav
   // detector teardowns the panel before pushing a new URL. So we can
   // compute the platform label once at mount and reuse it forever.
@@ -371,6 +377,13 @@ export function App({ request, onContinue, onPause, onClose }: PanelProps) {
               </li>
             ))}
           </ul>
+
+          {reviewAbstract && (
+            <div className="kg-review-abstract">
+              <span>Yorum özeti</span>
+              <p>{reviewAbstract}</p>
+            </div>
+          )}
 
           {/* Section 6 — causal rules that fired on top of the
               weighted-sum baseline. Collapsible; opens by default

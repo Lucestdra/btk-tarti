@@ -1,12 +1,10 @@
 /**
- * Generate Thundrly extension icons in 16/48/128 px PNGs.
+ * Generate Thundrly extension icons in 16/32/48/128 px PNGs.
  *
- * Design — solid cerulean (#007ea7) rounded square with a centered
- * deep-space-blue "T" mark, mirroring the brand wordmark. Pure-JS via
- * `pngjs`; no native deps, no sharp install.
+ * The icon now mirrors the in-panel logo: a light rounded tile containing
+ * four signal dots converging into one cerulean verdict dot.
  *
- * Run: `npm run icons:build` (from extension/). Commits the resulting
- * PNGs to `public/icons/`. Re-run only when the design changes.
+ * Run: `npm run icons:build` (from extension/).
  */
 
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -18,35 +16,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = resolve(__dirname, "..", "public", "icons");
 mkdirSync(OUT_DIR, { recursive: true });
 
-// Brand palette (mirrors landing/extension)
-const CERULEAN = { r: 0x00, g: 0x7e, b: 0xa7 }; // bg
-const ALABASTER = { r: 0xcc, g: 0xdb, b: 0xdc }; // letter
+const INK = { r: 0x00, g: 0x32, b: 0x49 };
+const ACCENT = { r: 0x00, g: 0x7e, b: 0xa7 };
+const SURFACE = { r: 0xf7, g: 0xfb, b: 0xfb };
+const BORDER = { r: 0xcc, g: 0xdb, b: 0xdc };
 const SIZES = [16, 32, 48, 128];
-
-// Tiny 5x7 monospace bitmap for the letter "T". Rows top→bottom.
-// 1 = letter pixel, 0 = background. Width is 5 px; height 7 px.
-const GLYPH_T = [
-  "11111",
-  "11111",
-  "00100",
-  "00100",
-  "00100",
-  "00100",
-  "00100",
-];
-
-function isInsideRoundedSquare(x, y, size) {
-  // Solid square with rounded corners. Radius scales with size.
-  const radius = Math.max(2, Math.floor(size * 0.18));
-  if (x >= radius && x < size - radius) return true;
-  if (y >= radius && y < size - radius) return true;
-  // Corner test: check distance from nearest corner center.
-  const cx = x < radius ? radius : size - radius - 1;
-  const cy = y < radius ? radius : size - radius - 1;
-  const dx = x - cx;
-  const dy = y - cy;
-  return dx * dx + dy * dy <= radius * radius;
-}
+const INPUT_Y = [9, 16.5, 23.5, 31];
 
 function setPixel(png, x, y, color, alpha = 255) {
   const idx = (png.width * y + x) << 2;
@@ -56,47 +31,91 @@ function setPixel(png, x, y, color, alpha = 255) {
   png.data[idx + 3] = alpha;
 }
 
-function drawGlyph(png, size) {
-  // Map 5x7 glyph into a square ~60% of icon size, centered.
-  const glyphCols = GLYPH_T[0].length;
-  const glyphRows = GLYPH_T.length;
-  const targetH = Math.max(7, Math.floor(size * 0.6));
-  const cellH = Math.max(1, Math.floor(targetH / glyphRows));
-  const cellW = cellH;
-  const glyphPxW = cellW * glyphCols;
-  const glyphPxH = cellH * glyphRows;
-  const x0 = Math.floor((size - glyphPxW) / 2);
-  const y0 = Math.floor((size - glyphPxH) / 2);
+function blend(base, overlay, alpha) {
+  return {
+    r: Math.round(base.r * (1 - alpha) + overlay.r * alpha),
+    g: Math.round(base.g * (1 - alpha) + overlay.g * alpha),
+    b: Math.round(base.b * (1 - alpha) + overlay.b * alpha),
+  };
+}
 
-  for (let gy = 0; gy < glyphRows; gy++) {
-    for (let gx = 0; gx < glyphCols; gx++) {
-      if (GLYPH_T[gy][gx] !== "1") continue;
-      for (let dy = 0; dy < cellH; dy++) {
-        for (let dx = 0; dx < cellW; dx++) {
-          const px = x0 + gx * cellW + dx;
-          const py = y0 + gy * cellH + dy;
-          if (px < 0 || px >= size || py < 0 || py >= size) continue;
-          setPixel(png, px, py, ALABASTER);
-        }
-      }
-    }
-  }
+function roundedRectAlpha(x, y, size, radius) {
+  const left = radius;
+  const right = size - radius;
+  const top = radius;
+  const bottom = size - radius;
+  const dx = x < left ? left - x : x > right ? x - right : 0;
+  const dy = y < top ? top - y : y > bottom ? y - bottom : 0;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist <= radius - 0.75) return 1;
+  if (dist >= radius + 0.75) return 0;
+  return Math.max(0, Math.min(1, radius + 0.75 - dist));
+}
+
+function distToSegment(px, py, ax, ay, bx, by) {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const wx = px - ax;
+  const wy = py - ay;
+  const c1 = wx * vx + wy * vy;
+  if (c1 <= 0) return Math.hypot(px - ax, py - ay);
+  const c2 = vx * vx + vy * vy;
+  if (c2 <= c1) return Math.hypot(px - bx, py - by);
+  const t = c1 / c2;
+  const projX = ax + t * vx;
+  const projY = ay + t * vy;
+  return Math.hypot(px - projX, py - projY);
+}
+
+function lineAlpha(px, py, ax, ay, bx, by, strokeWidth) {
+  const d = distToSegment(px, py, ax, ay, bx, by);
+  const half = strokeWidth / 2;
+  if (d <= half - 0.25) return 1;
+  if (d >= half + 0.5) return 0;
+  return Math.max(0, Math.min(1, (half + 0.5 - d) / 0.75));
+}
+
+function circleAlpha(px, py, cx, cy, r) {
+  const d = Math.hypot(px - cx, py - cy);
+  if (d <= r - 0.25) return 1;
+  if (d >= r + 0.5) return 0;
+  return Math.max(0, Math.min(1, (r + 0.5 - d) / 0.75));
 }
 
 function renderIcon(size) {
   const png = new PNG({ width: size, height: size });
-  // First pass: fill the rounded square, transparent outside.
+  const radius = size * 0.24;
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      if (isInsideRoundedSquare(x, y, size)) {
-        setPixel(png, x, y, CERULEAN);
-      } else {
-        setPixel(png, x, y, CERULEAN, 0); // fully transparent
+      const alpha = roundedRectAlpha(x + 0.5, y + 0.5, size, radius);
+      if (alpha <= 0) {
+        setPixel(png, x, y, SURFACE, 0);
+        continue;
       }
+
+      let color = SURFACE;
+      const edgeAlpha = alpha < 1 ? 0.55 : 0;
+      if (edgeAlpha > 0) color = blend(color, BORDER, edgeAlpha);
+
+      const vx = ((x + 0.5) / size) * 40;
+      const vy = ((y + 0.5) / size) * 40;
+
+      for (const inputY of INPUT_Y) {
+        const a = lineAlpha(vx, vy, 11.5, inputY, 29, 20, 1.3) * 0.32;
+        if (a > 0) color = blend(color, INK, a);
+      }
+      for (const inputY of INPUT_Y) {
+        const a = circleAlpha(vx, vy, 11, inputY, 2.1);
+        if (a > 0) color = blend(color, INK, a);
+      }
+      const verdictAlpha = circleAlpha(vx, vy, 29, 20, 5);
+      if (verdictAlpha > 0) color = blend(color, ACCENT, verdictAlpha);
+
+      setPixel(png, x, y, color, Math.round(alpha * 255));
     }
   }
-  // Second pass: draw the "T".
-  drawGlyph(png, size);
+
   return PNG.sync.write(png);
 }
 

@@ -47,16 +47,23 @@ interface LogoProps {
 }
 
 const sizes = {
-  sm: { mark: "h-5 w-5", text: "text-[14px]" },
-  md: { mark: "h-7 w-7", text: "text-[17px]" },
-  lg: { mark: "h-9 w-9", text: "text-[20px]" },
+  sm: { box: "h-7 w-7 rounded-[8px]", mark: "h-5 w-5", text: "text-[14px]" },
+  md: { box: "h-9 w-9 rounded-[10px]", mark: "h-6 w-6", text: "text-[17px]" },
+  lg: { box: "h-10 w-10 rounded-[10px]", mark: "h-7 w-7", text: "text-[20px]" },
 } as const;
 
 export function Logo({ size = "md", className, showWordmark = true }: LogoProps) {
   const s = sizes[size];
   return (
     <span className={cn("inline-flex items-center gap-3 text-ink", className)}>
-      <LogoMark className={s.mark} />
+      <span
+        className={cn(
+          "inline-flex items-center justify-center border border-line bg-alabaster-grey/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_1px_2px_rgba(0,50,73,0.08)]",
+          s.box,
+        )}
+      >
+        <LogoMark className={s.mark} />
+      </span>
       {showWordmark && (
         <span className={cn("font-display font-normal tracking-tight leading-none", s.text)}>
           Thundrly

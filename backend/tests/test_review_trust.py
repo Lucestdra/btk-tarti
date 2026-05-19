@@ -149,6 +149,18 @@ def test_healthy_diverse_reviews_yield_high_trust_low_score():
     assert "/100" in trust_line
 
 
+def test_review_abstract_is_added_from_recent_comments():
+    reviews = [
+        {"rating": 5, "text": "Kaliteli ve sağlam, hızlı kargo ile geldi", "date": "2026-05-10"},
+        {"rating": 4, "text": "Kullanışlı ama paketleme biraz ezilmişti", "date": "2026-05-09"},
+        {"rating": 5, "text": "Çok beğendim, tavsiye ederim", "date": "2026-05-08"},
+    ]
+    result = review_agent._run_heuristic(_req(reviews))
+    assert result.findings[0].message.startswith("Son yorum özeti:")
+    assert "ortalaması" in result.findings[0].message
+    assert "kalite" in result.findings[0].message
+
+
 def test_burst_signal_fires_when_most_reviews_in_same_window():
     reviews = [
         {"rating": 5, "text": "Çok güzel ürün hızlı kargo", "date": "2026-05-10"},

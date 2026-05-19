@@ -118,11 +118,14 @@ export function parseRating(value: unknown): number | undefined {
   // 1. Explicit "out-of-N" patterns first — they unambiguously name
   //    the rating value vs the scale.
   //
-  //    "5 üzerinden 4,7"   → 4.7
-  //    "4.6 out of 5"      → 4.6
-  //    "4,2 / 5"           → 4.2
+  //    "5 yıldız üzerinden 4,7" → 4.7
+  //    "4,7 üzerinden 5"        → 4.7
+  //    "4.6 out of 5"           → 4.6
+  //    "4,2 / 5"                → 4.2
   const patterns = [
-    /\büzerinden\s+(\d+(?:[.,]\d+)?)/i,        // TR: "X üzerinden Y" — Y is rating
+    /(\d+(?:[.,]\d+)?)\s*(?:yıldız\s*)?üzerinden\s*5(?:[.,]0)?/i,  // TR: "Y üzerinden 5"
+    /(?<![\d.,])5(?:[.,]0)?\s*(?:yıldız\s*)?üzerinden\s+(\d+(?:[.,]\d+)?)/i, // TR: "5 üzerinden Y"
+    /\büzerinden\s+([0-4](?:[.,]\d+)?)/i,      // TR fallback: "üzerinden 4,7"
     /(\d+(?:[.,]\d+)?)\s*\/\s*5\b/,            // "Y / 5"
     /(\d+(?:[.,]\d+)?)\s*out of\s*5\b/i,       // "Y out of 5"
     /(\d+(?:[.,]\d+)?)\s*yıldız/i,             // "Y yıldız"
@@ -712,6 +715,19 @@ function mergeFields(...sources: Partial<Product>[]): Partial<Product> {
   return out;
 }
 
+function preferVisibleRating(
+  current: number | null | undefined,
+  visible: number | null | undefined,
+): number | undefined {
+  if (visible === undefined || visible === null) return current ?? undefined;
+  if (current === undefined || current === null) return visible;
+  if (Math.abs(current - visible) < 0.05) return current;
+  console.warn(
+    `[Thundrly/extract] rating reconciled: JSON/structured=${current.toFixed(1)} visible=${visible.toFixed(1)}; using visible rating`,
+  );
+  return visible;
+}
+
 export function extractProductBasics(host: Host): Partial<Product> {
   // Demo: explicit data-attrs short-circuit everything else.
   if (host === "demo") {
@@ -750,6 +766,12 @@ export function extractProductBasics(host: Host): Partial<Product> {
   // the cleanest signal. We *override* JSON-LD only when JSON-LD is
   // suspicious (see installment guard below).
   let merged = mergeFields(ld, next, micro, plat, og);
+
+  // Ratings are user-visible trust signals, and some marketplaces publish
+  // stale/rounded JSON-LD (Amazon TR can expose ratingValue=5 while the UI
+  // says 4.5). When the platform selector sees a concrete visible rating,
+  // prefer it over structured metadata.
+  merged = { ...merged, rating: preferVisibleRating(merged.rating, plat.rating) };
 
   // Installment guard: if the chosen `price` is suspiciously small
   // compared to OTHER layers' candidates, the smaller one is likely
@@ -802,17 +824,13 @@ function _parseRatingFromElement(el: HTMLElement): number | undefined {
   for (const attr of ["data-kg-rating", "data-rating", "content", "value"]) {
     const raw = el.getAttribute(attr);
     if (raw) {
-      const n = parseFloat(raw.replace(",", "."));
-      if (Number.isFinite(n) && n >= 0 && n <= 5) return n;
+      const n = parseRating(raw);
+      if (n !== undefined) return n;
     }
   }
   const text = el.textContent?.trim() ?? "";
-  // Numeric in text: "4.5", "5/5", "5 puan"
-  const numMatch = text.match(/(\d+([.,]\d+)?)/);
-  if (numMatch) {
-    const n = parseFloat(numMatch[1].replace(",", "."));
-    if (Number.isFinite(n) && n >= 0 && n <= 5) return n;
-  }
+  const numeric = parseRating(text);
+  if (numeric !== undefined) return numeric;
   // Star-character fallback: "★★★★★" → 5, "⭐⭐" → 2
   const stars = (text.match(/★|⭐/g) || []).length;
   if (stars > 0 && stars <= 5) return stars;

@@ -414,6 +414,29 @@
 .kg-reasons.yellow  { color: var(--kg-warn); }
 .kg-reasons.red     { color: var(--kg-risk); }
 
+.kg-review-abstract {
+  margin: -4px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--kg-line-soft);
+  border-radius: var(--kg-radius-md);
+  background: var(--kg-surface-0);
+}
+.kg-review-abstract span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--kg-ink-soft);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.kg-review-abstract p {
+  margin: 0;
+  color: var(--kg-ink-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 /* ---------- Triggered rules ---------- */
 
 .kg-rules {
