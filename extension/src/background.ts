@@ -17,7 +17,55 @@ import type { AnalyzeRequest, AnalyzeResponse, Review } from "@shared/types";
 import type { Host } from "@/utils/domDetector";
 import { ANALYZE_STREAM_URL, ANALYZE_URL, OBSERVATION_URL, PURCHASE_URL } from "@/config";
 
-type AnalyzeMessage = { type: "analyze"; payload: AnalyzeRequest };
+// ----------------------------------------------------------------
+// Sender allow-list — defense-in-depth on the message-passing layer.
+//
+// Chrome already restricts our content-scripts to the manifest's
+// host-permission list, and we don't expose `externally_connectable`,
+// so in theory only our own content-scripts/popup can reach this
+// listener. We still validate `sender.id` and `sender.url` so that any
+// future manifest change doesn't silently open us up to a hostile page
+// sending messages with a forged AnalyzeRequest.
+// ----------------------------------------------------------------
+
+const ALLOWED_HOST_SUFFIXES = [
+  "trendyol.com", "hepsiburada.com", "n11.com", "amazon.com.tr",
+  "ciceksepeti.com", "mediamarkt.com.tr", "teknosa.com",
+  "vatanbilgisayar.com", "boyner.com.tr", "lcwaikiki.com",
+  "defacto.com.tr", "modanisa.com", "a101.com.tr", "migros.com.tr",
+  "carrefoursa.com", "beymen.com", "pazarama.com", "pttavm.com",
+  "tchibo.com.tr", "decathlon.com.tr", "ikea.com.tr",
+];
+
+function isAllowedSender(sender: chrome.runtime.MessageSender | undefined): boolean {
+  if (!sender) return false;
+  // Sender ID check: rejects messages from any other extension that
+  // somehow got past externally_connectable (we don't set it, so this
+  // should always pass for our own code).
+  if (sender.id !== chrome.runtime.id) return false;
+  const url = sender.url || sender.tab?.url || "";
+  if (!url) return false;
+  // Popup / options page — chrome-extension:// own origin.
+  if (url.startsWith(`chrome-extension://${chrome.runtime.id}/`)) return true;
+  // Content-script origin — must be one of our allow-listed hosts OR
+  // the demo-product.html web-accessible page (any origin, but only
+  // when the path matches).
+  try {
+    const u = new URL(url);
+    if (u.protocol === "chrome-extension:") return true; // handled above; fallback
+    if (u.pathname.endsWith("/demo-product.html") || u.pathname.endsWith("/public/demo-product.html")) {
+      return true;
+    }
+    const host = u.hostname;
+    return ALLOWED_HOST_SUFFIXES.some(
+      (suffix) => host === suffix || host.endsWith(`.${suffix}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+type AnalyzeMessage = { type: "analyze"; payload: AnalyzeRequest; forceRefresh?: boolean };
 type ObservationMessage = {
   type: "priceObservation";
   payload: { url: string; price: number; currency: "TRY"; title?: string };
@@ -32,11 +80,18 @@ type FetchReviewsMessage = {
 };
 type IncomingMessage = AnalyzeMessage | ObservationMessage | PurchaseMessage | FetchReviewsMessage;
 
-chrome.runtime.onMessage.addListener((msg: IncomingMessage, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: IncomingMessage, sender, sendResponse) => {
+  if (!isAllowedSender(sender)) {
+    console.warn("[Thundrly] reddedildi: bilinmeyen gönderici", sender?.url);
+    sendResponse({ ok: false, error: "unauthorized sender" });
+    return false;
+  }
+
   if (msg?.type === "analyze") {
     (async () => {
       try {
-        const r = await fetch(ANALYZE_URL, {
+        const url = msg.forceRefresh ? `${ANALYZE_URL}?force_refresh=true` : ANALYZE_URL;
+        const r = await fetch(url, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(msg.payload),
@@ -127,21 +182,58 @@ chrome.runtime.onMessage.addListener((msg: IncomingMessage, _sender, sendRespons
 //   - The HTML payload can be 200+ KB; regex avoids building a full DOM.
 // ----------------------------------------------------------------
 
-async function fetchAndParseReviews(url: string, host: Host): Promise<Review[]> {
-  const r = await fetch(url, {
-    headers: {
-      // Look like a real browser navigation so the server returns the
-      // populated HTML rather than a minimal SPA skeleton.
-      accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
-      "accept-language": "tr-TR,tr;q=0.9,en;q=0.8",
-    },
-  });
-  if (!r.ok) return [];
-  const html = await r.text();
+const REVIEW_PAGE_CAP = 100;       // hard cap on reviews per product
+const REVIEW_PAGE_LIMIT = 5;       // hard cap on pagination depth
 
-  if (host === "trendyol") return parseTrendyolReviews(html);
-  if (host === "hepsiburada") return parseHepsiburadaReviews(html);
-  return [];
+async function fetchAndParseReviews(url: string, host: Host): Promise<Review[]> {
+  // Trendyol + Hepsiburada paginate their review subpages; walk them up
+  // to REVIEW_PAGE_LIMIT or REVIEW_PAGE_CAP, whichever comes first.
+  // Stop early on an empty page (end of stream) so we don't burn time
+  // on dead requests.
+  if (host !== "trendyol" && host !== "hepsiburada") return [];
+
+  const all: Review[] = [];
+  const seen = new Set<string>();
+  for (let page = 1; page <= REVIEW_PAGE_LIMIT; page++) {
+    const pageUrl = appendReviewPageParam(url, host, page);
+    const r = await fetch(pageUrl, {
+      headers: {
+        // Look like a real browser navigation so the server returns the
+        // populated HTML rather than a minimal SPA skeleton.
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
+        "accept-language": "tr-TR,tr;q=0.9,en;q=0.8",
+      },
+    });
+    if (!r.ok) break;
+    const html = await r.text();
+    const batch = host === "trendyol" ? parseTrendyolReviews(html) : parseHepsiburadaReviews(html);
+    if (batch.length === 0) break;
+    let added = 0;
+    for (const rv of batch) {
+      // Dedup by (author|text|date) — Trendyol's later pages occasionally
+      // repeat the first page's items during pagination races.
+      const key = `${rv.author || ""}|${rv.text}|${rv.date}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      all.push(rv);
+      added++;
+      if (all.length >= REVIEW_PAGE_CAP) break;
+    }
+    if (all.length >= REVIEW_PAGE_CAP || added === 0) break;
+  }
+  return all;
+}
+
+function appendReviewPageParam(url: string, host: Host, page: number): string {
+  if (page <= 1) return url; // first page is the canonical URL
+  try {
+    const u = new URL(url);
+    const param = host === "trendyol" ? "page" : "sayfa";
+    u.searchParams.set(param, String(page));
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 function parseTrendyolReviews(html: string): Review[] {
@@ -155,7 +247,7 @@ function parseTrendyolReviews(html: string): Review[] {
       const data = JSON.parse(next[1]);
       const found: Review[] = [];
       collectTrendyolReviewsFromTree(data, found);
-      if (found.length > 0) return found.slice(0, 25);
+      if (found.length > 0) return found.slice(0, REVIEW_PAGE_CAP);
     } catch {
       /* fall through to regex */
     }
@@ -174,13 +266,13 @@ function parseTrendyolReviews(html: string): Review[] {
     const rating = parseFloat(card.match(rateRe)?.[1] || "0");
     const date = stripTags(card.match(dateRe)?.[1] || "").trim();
     out.push({ rating: Number.isFinite(rating) ? rating : 5, text, date });
-    if (out.length >= 25) break;
+    if (out.length >= REVIEW_PAGE_CAP) break;
   }
   return out;
 }
 
 function collectTrendyolReviewsFromTree(node: unknown, out: Review[], depth = 0): void {
-  if (depth > 12 || out.length >= 25) return;
+  if (depth > 12 || out.length >= REVIEW_PAGE_CAP) return;
   if (Array.isArray(node)) {
     for (const item of node) collectTrendyolReviewsFromTree(item, out, depth + 1);
     return;
@@ -193,7 +285,26 @@ function collectTrendyolReviewsFromTree(node: unknown, out: Review[], depth = 0)
     if (text) {
       const rating = Math.max(0, Math.min(5, Number(obj.rate)));
       const date = String(obj.lastModifiedDate ?? obj.commentDateISOtype ?? "").slice(0, 10);
-      out.push({ rating, text, date });
+      // Author: stored under userFullName, commentOwnerName, or userName.
+      const author =
+        (typeof obj.userFullName === "string" && obj.userFullName) ||
+        (typeof obj.commentOwnerName === "string" && obj.commentOwnerName) ||
+        (typeof obj.userName === "string" && obj.userName) ||
+        undefined;
+      // Verified-purchase: Trendyol exposes a few boolean badges; any of
+      // them being true is sufficient confirmation.
+      const verifiedPurchase =
+        Boolean(obj.commentOwnerSeller) ||
+        Boolean(obj.isVerifiedPurchase) ||
+        Boolean(obj.verifiedPurchase) ||
+        undefined;
+      const helpfulCount =
+        typeof obj.likeCount === "number"
+          ? Math.max(0, Math.floor(obj.likeCount))
+          : typeof obj.helpfulCount === "number"
+            ? Math.max(0, Math.floor(obj.helpfulCount))
+            : undefined;
+      out.push({ rating, text, date, author, verifiedPurchase, helpfulCount });
     }
   }
   for (const v of Object.values(obj)) collectTrendyolReviewsFromTree(v, out, depth + 1);
@@ -209,7 +320,7 @@ function parseHepsiburadaReviews(html: string): Review[] {
       const data = JSON.parse(initial[1]);
       const found: Review[] = [];
       collectHepsiburadaReviewsFromTree(data, found);
-      if (found.length > 0) return found.slice(0, 25);
+      if (found.length > 0) return found.slice(0, REVIEW_PAGE_CAP);
     } catch {
       /* fall through */
     }
@@ -228,13 +339,13 @@ function parseHepsiburadaReviews(html: string): Review[] {
     const rating = parseFloat(card.match(rateRe)?.[1] || "5");
     const date = stripTags(card.match(dateRe)?.[1] || "").trim();
     out.push({ rating: Number.isFinite(rating) ? rating : 5, text, date });
-    if (out.length >= 25) break;
+    if (out.length >= REVIEW_PAGE_CAP) break;
   }
   return out;
 }
 
 function collectHepsiburadaReviewsFromTree(node: unknown, out: Review[], depth = 0): void {
-  if (depth > 12 || out.length >= 25) return;
+  if (depth > 12 || out.length >= REVIEW_PAGE_CAP) return;
   if (Array.isArray(node)) {
     for (const item of node) collectHepsiburadaReviewsFromTree(item, out, depth + 1);
     return;
@@ -250,7 +361,22 @@ function collectHepsiburadaReviewsFromTree(node: unknown, out: Review[], depth =
     if (text) {
       const rating = Math.max(0, Math.min(5, Number(obj.ratingPoint ?? obj.star)));
       const date = String(obj.createdAt ?? obj.reviewDate ?? "").slice(0, 10);
-      out.push({ rating, text, date });
+      const author =
+        (typeof obj.customerName === "string" && obj.customerName) ||
+        (typeof obj.userName === "string" && obj.userName) ||
+        undefined;
+      const verifiedPurchase =
+        Boolean(obj.isVerifiedPurchase) ||
+        Boolean(obj.verifiedPurchase) ||
+        Boolean(obj.purchased) ||
+        undefined;
+      const helpfulCount =
+        typeof obj.helpfulCount === "number"
+          ? Math.max(0, Math.floor(obj.helpfulCount))
+          : typeof obj.likeCount === "number"
+            ? Math.max(0, Math.floor(obj.likeCount))
+            : undefined;
+      out.push({ rating, text, date, author, verifiedPurchase, helpfulCount });
     }
   }
   for (const v of Object.values(obj)) collectHepsiburadaReviewsFromTree(v, out, depth + 1);
@@ -267,12 +393,18 @@ function stripTags(s: string): string {
 // ----------------------------------------------------------------
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "analyze-stream") return;
+  if (!isAllowedSender(port.sender)) {
+    console.warn("[Thundrly] stream-port reddedildi: bilinmeyen gönderici", port.sender?.url);
+    try { port.disconnect(); } catch { /* already closed */ }
+    return;
+  }
 
-  port.onMessage.addListener(async (msg: { type: "start"; payload: AnalyzeRequest } | unknown) => {
+  port.onMessage.addListener(async (msg: { type: "start"; payload: AnalyzeRequest; forceRefresh?: boolean } | unknown) => {
     if (!isStartMessage(msg)) return;
 
     try {
-      const resp = await fetch(ANALYZE_STREAM_URL, {
+      const url = msg.forceRefresh ? `${ANALYZE_STREAM_URL}?force_refresh=true` : ANALYZE_STREAM_URL;
+      const resp = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(msg.payload),
@@ -325,7 +457,7 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-function isStartMessage(msg: unknown): msg is { type: "start"; payload: AnalyzeRequest } {
+function isStartMessage(msg: unknown): msg is { type: "start"; payload: AnalyzeRequest; forceRefresh?: boolean } {
   return !!msg && typeof msg === "object" && (msg as { type?: unknown }).type === "start";
 }
 

@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getInstallId } from "@/utils/installId";
-import { USER_BUDGETS_URL, USER_BUDGET_URL } from "@/config";
+import { USER_BUDGETS_URL, USER_BUDGET_GLOBAL_URL, USER_BUDGET_URL } from "@/config";
 
 interface CategoryBudget {
   category: string;
@@ -143,8 +143,28 @@ export function App() {
     setSaving(true);
     setError(null);
     try {
-      // No bulk endpoint yet — upsert each category one at a time. Keeping
-      // these sequential lets us surface the first failing row clearly.
+      // Always persist the global envelope FIRST. This is the hybrid
+      // model's primary signal — even users with zero per-category rows
+      // get a working budget agent after this PUT.
+      const globalPayload = {
+        monthlyLimit: monthly,
+        categoryLimit: monthly,
+        categorySpent: 0,
+        currency: "TRY",
+      };
+      const rg = await fetch(
+        `${USER_BUDGET_GLOBAL_URL}?userId=${encodeURIComponent(userId)}`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(globalPayload),
+        },
+      );
+      if (!rg.ok) throw new Error(`Aylık genel bütçe kaydedilemedi: HTTP ${rg.status}`);
+
+      // Per-category rows are optional power-user data — only PUT the
+      // ones the user actually configured. Sequential so the first
+      // failure surfaces a clear category name in the error.
       for (const cat of categories) {
         if (!cat.category.trim() || cat.categoryLimit < 0) continue;
         const payload = {
@@ -192,9 +212,12 @@ export function App() {
         </div>
       )}
 
-      {/* Overall monthly progress */}
+      {/* Overall monthly progress — the PRIMARY field in the hybrid model.
+          The global envelope alone is enough for the budget agent to work
+          on every category. Per-category limits below are optional and
+          only narrow the verdict on products that confidently match one. */}
       <section className="pop-section">
-        <label className="pop-label" htmlFor="monthly">Aylık bütçe</label>
+        <label className="pop-label" htmlFor="monthly">Aylık genel bütçe</label>
         <div className="pop-row">
           <span className="pop-currency">₺</span>
           <input
@@ -223,15 +246,17 @@ export function App() {
         )}
       </section>
 
-      {/* Per-category */}
+      {/* Per-category — optional fine-tuning */}
       <section className="pop-section">
         <div className="pop-label-row">
-          <label className="pop-label">Kategoriler</label>
+          <label className="pop-label">Kategori limitleri <span className="pop-optional">(opsiyonel)</span></label>
           <span className="pop-hint">limit • bu ay harcanan</span>
         </div>
 
         {categories.length === 0 && (
-          <div className="pop-empty-cats">Henüz kategori eklenmedi.</div>
+          <div className="pop-empty-cats">
+            Kategori eklemen zorunlu değil — genel bütçe her ürün için geçerli.
+          </div>
         )}
 
         <ul className="pop-cat-list">

@@ -17,22 +17,39 @@ Severity = Literal["info", "warn", "risk"]
 
 
 class Product(BaseModel):
-    title: str
-    price: float
-    originalPrice: Optional[float] = None
+    # Free-form fields capped to prevent a hostile content-script
+    # from shipping a megabyte of garbage and forcing the agent path
+    # to chew on it. Caps are generous (real titles are well under).
+    title: str = Field(min_length=1, max_length=512)
+    price: float = Field(ge=0, lt=10_000_000)
+    originalPrice: Optional[float] = Field(default=None, ge=0, lt=10_000_000)
     currency: Currency = "TRY"
-    category: str
-    rating: Optional[float] = None
-    reviewCount: Optional[int] = None
-    url: str
-    imageUrl: Optional[str] = None
+    category: str = Field(min_length=1, max_length=128)
+    rating: Optional[float] = Field(default=None, ge=0, le=5)
+    reviewCount: Optional[int] = Field(default=None, ge=0, lt=10_000_000)
+    url: str = Field(min_length=8, max_length=2048)
+    imageUrl: Optional[str] = Field(default=None, max_length=2048)
+    # On-page "son 30 günün en düşük fiyatı" disclosure required by
+    # Turkish consumer-protection regulation. When present, this is the
+    # strongest single source of truth for cross-checking inflated
+    # original-price claims. Extension parses it; backend cross-checks
+    # against our own history and Akakçe data.
+    legalLowestPrice30d: Optional[float] = None
 
 
 class Review(BaseModel):
-    rating: float
-    text: str
-    date: str
-    author: Optional[str] = None
+    rating: float = Field(ge=0, le=5)
+    # 2 KB is well above any real review (TR sites cap user input at
+    # 500-1500 chars) and small enough that a 100-review payload stays
+    # under 200 KB.
+    text: str = Field(min_length=1, max_length=2048)
+    date: str = Field(max_length=32)
+    author: Optional[str] = Field(default=None, max_length=128)
+    # Trust signals — present when the platform exposes them, omitted
+    # otherwise. The review_agent folds these into its trust score
+    # (verified-purchase ratio, helpful-vote signal, author repetition).
+    verifiedPurchase: Optional[bool] = None
+    helpfulCount: Optional[int] = None
 
 
 class PriceHistoryPoint(BaseModel):
@@ -41,10 +58,14 @@ class PriceHistoryPoint(BaseModel):
 
 
 class UserBudget(BaseModel):
-    monthlyLimit: float
-    categoryLimit: float
-    categorySpent: float
-    monthlySpent: Optional[float] = None
+    # Bounds: same ceiling as PriceObservationIn.price for consistency.
+    # Negative limits are nonsensical; lower-bound is gt=0 so empty
+    # "categoryLimit: 0" updates from the popup intentionally clear a
+    # row's per-category cap by deleting/re-upserting, not by writing 0.
+    monthlyLimit: float = Field(gt=0, lt=10_000_000)
+    categoryLimit: float = Field(ge=0, lt=10_000_000)
+    categorySpent: float = Field(ge=0, lt=10_000_000)
+    monthlySpent: Optional[float] = Field(default=None, ge=0, lt=10_000_000)
     currency: Currency = "TRY"
 
 
@@ -89,6 +110,10 @@ class AnalyzeRequest(BaseModel):
 class AgentFinding(BaseModel):
     severity: Severity
     message: str
+    # Optional machine-readable tag so the frontend can render special
+    # visual treatments (badges, chips) without parsing free-form
+    # Turkish prose. Known tags: "suspiciousDiscount", "lowReviewTrust".
+    tag: Optional[str] = None
 
 
 class AgentResult(BaseModel):
@@ -105,6 +130,20 @@ class AgentResultMap(BaseModel):
     decisionAgent: AgentResult
 
 
+class TriggeredRule(BaseModel):
+    """One causal rule that fired in the decision pass.
+
+    The rule engine evaluates AND/OR combinations over tagged findings
+    (e.g. ``suspiciousDiscount + lowReviewTrust``) and emits one of these
+    for each rule it triggered. The panel renders them as a small
+    "Tetiklenen kurallar" section so the user can see WHY the verdict
+    landed where it did beyond the bare risk score.
+    """
+    name: str = Field(min_length=1, max_length=64)
+    severity: Severity
+    explanation: str = Field(min_length=1, max_length=240)
+
+
 class AnalyzeResponse(BaseModel):
     decision: Decision
     riskScore: int = Field(ge=0, le=100)
@@ -112,6 +151,10 @@ class AnalyzeResponse(BaseModel):
     reasons: List[str]
     agents: AgentResultMap
     recommendedAction: str
+    # Causal rules that fired on top of the weighted-sum score. Empty
+    # when only the linear combination drove the verdict. Optional
+    # default makes the field backwards-compatible.
+    triggeredRules: List[TriggeredRule] = Field(default_factory=list)
 
 
 class PriceObservationIn(BaseModel):

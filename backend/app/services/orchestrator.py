@@ -22,14 +22,28 @@ from sqlalchemy.orm import Session
 
 from app.models.schemas import AnalyzeRequest, AnalyzeResponse
 from app.services import graph as analysis_graph
+from app.services.category_classifier import classify as classify_category
 from app.services.external_price_history import fetch_for_product as fetch_external_history
 from app.services.price_history import get_recent
-from app.services.user_budget import get as get_budget
+from app.services.user_budget import (
+    get_effective_global,
+    get_strict as get_budget_strict,
+)
 
 logger = logging.getLogger(__name__)
 
+# Classifier confidence at or above which we trust the normalized
+# category enough to look it up in user_budgets. Below this threshold we
+# fall back to the user's global envelope, which is always safe.
+_CATEGORY_CONFIDENCE_THRESHOLD = 0.7
 
-def analyze(req: AnalyzeRequest, *, db: Optional[Session] = None) -> AnalyzeResponse:
+
+def analyze(
+    req: AnalyzeRequest,
+    *,
+    db: Optional[Session] = None,
+    force_refresh: bool = False,
+) -> AnalyzeResponse:
     # Price history resolution, in priority order:
     #   1. Body-supplied `priceHistory` (tests + synthetic fixtures).
     #   2. Crowdsource DB (last 90d for this product URL).
@@ -46,21 +60,77 @@ def analyze(req: AnalyzeRequest, *, db: Optional[Session] = None) -> AnalyzeResp
         if external:
             req = req.model_copy(update={"priceHistory": external})
 
-    # User budget: load from `user_budgets` keyed on (userId, category)
-    # if the caller didn't supply one. If no row exists we leave it as
-    # ``None`` — budget_agent reports "Bütçe Verisi Yok" honestly rather
-    # than scoring against a fabricated default.
+    # User budget resolution — hybrid model.
+    #
+    #   1. Classify the product (rule-based, no LLM) to normalize the
+    #      extractor's category string against a fixed Turkish taxonomy.
+    #   2. If classification is confident AND a matching per-category
+    #      row exists, use it — that's the user's narrower preference.
+    #   3. Otherwise fall back to the GLOBAL monthly envelope. This is
+    #      the safety net that prevents "Bütçe Verisi Yok" whenever the
+    #      extractor returns a label nobody configured (the original
+    #      Section 1.3 bug).
     if req.userBudget is None and db is not None:
-        stored = get_budget(db, req.userId, req.product.category)
-        if stored is not None:
-            req = req.model_copy(update={"userBudget": stored})
-        else:
-            # Visible in docker logs to debug "Bütçe Verisi Yok" reports.
-            logger.info(
-                "budget.miss user=%s category=%r — no rows for this user "
-                "(verify popup save and that userId matches)",
-                req.userId[:12] + "…" if len(req.userId) > 12 else req.userId,
-                req.product.category,
-            )
+        chosen = _resolve_budget(db, req)
+        if chosen is not None:
+            req = req.model_copy(update={"userBudget": chosen})
 
-    return analysis_graph.run(req)
+    return analysis_graph.run(req, force_refresh=force_refresh)
+
+
+def _resolve_budget(db: Session, req: AnalyzeRequest):
+    """Apply the hybrid (per-category-then-global) resolution.
+
+    Logging here is intentionally verbose — Bütçe Verisi Yok reports
+    were historically hard to diagnose without seeing both the extractor
+    string and the classifier's verdict in the same log line.
+    """
+    user_id = req.userId
+    raw_cat = req.product.category or ""
+    classification = classify_category(
+        title=req.product.title,
+        extractor_category=raw_cat,
+        breadcrumbs=None,
+    )
+
+    user_prefix = user_id[:12] + "…" if len(user_id) > 12 else user_id
+
+    # 1) Per-category lookup, but only when classification is confident
+    # enough that a hit/miss is meaningful.
+    if classification.confidence >= _CATEGORY_CONFIDENCE_THRESHOLD:
+        per_cat = get_budget_strict(db, user_id, classification.category)
+        if per_cat is not None:
+            logger.info(
+                "budget.resolved.category user=%s raw=%r normalized=%s confidence=%.2f",
+                user_prefix, raw_cat, classification.category, classification.confidence,
+            )
+            return per_cat
+
+    # 2) Try the extractor's original string verbatim (power users who
+    # configured a custom category name that doesn't map to our taxonomy).
+    if raw_cat:
+        verbatim = get_budget_strict(db, user_id, raw_cat)
+        if verbatim is not None:
+            logger.info(
+                "budget.resolved.verbatim user=%s category=%r", user_prefix, raw_cat,
+            )
+            return verbatim
+
+    # 3) GLOBAL envelope — always-available safety net. Falls back to a
+    # synthesized envelope (from any per-category row's monthly_limit)
+    # when no explicit GLOBAL row exists, so legacy users who only
+    # configured one category still get a sensible verdict on unrelated
+    # products.
+    global_budget = get_effective_global(db, user_id)
+    if global_budget is not None:
+        logger.info(
+            "budget.resolved.global user=%s raw=%r classified=%s/%.2f",
+            user_prefix, raw_cat, classification.category, classification.confidence,
+        )
+        return global_budget
+
+    logger.info(
+        "budget.miss user=%s raw=%r classified=%s/%.2f — no rows for this user",
+        user_prefix, raw_cat, classification.category, classification.confidence,
+    )
+    return None

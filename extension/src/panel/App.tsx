@@ -6,6 +6,8 @@ import {
   type StreamEvent,
 } from "@/api/client";
 import { detectHost, platformLabel } from "@/utils/domDetector";
+import { TaggedChips } from "./TaggedChips";
+import { TriggeredRulesList } from "./TriggeredRulesList";
 import "./Panel.css";
 
 type Phase = "loading" | "result" | "error";
@@ -173,7 +175,10 @@ export function App({ request, onContinue, onPause, onClose }: PanelProps) {
   }, [request]);
 
   const tone = useMemo(() => (result ? decisionToneClass[result.decision] : "red"), [result]);
-  const platform = useMemo(() => platformLabel(detectHost(location.href)), []);
+  // location.href is stable for the panel's lifetime — the SPA-nav
+  // detector teardowns the panel before pushing a new URL. So we can
+  // compute the platform label once at mount and reuse it forever.
+  const platform = useMemo(() => platformLabel(detectHost(location.href)), []);  // eslint-disable-line react-hooks/exhaustive-deps
   const product = request.product;
 
   return (
@@ -263,6 +268,11 @@ export function App({ request, onContinue, onPause, onClose }: PanelProps) {
             </div>
           </div>
 
+          {/* Tagged warnings — extracted into TaggedChips so adding new
+              tags (lowReviewTrust, outOfPolicy, …) is one config row,
+              not new inline JSX in App.tsx. */}
+          <TaggedChips agents={result.agents} />
+
           {/* Agent score bars — each shows its score, its verdict label,
               and on hover its top finding so the user can see *why* each
               agent concluded what it did instead of just a number. */}
@@ -304,6 +314,11 @@ export function App({ request, onContinue, onPause, onClose }: PanelProps) {
               </li>
             ))}
           </ul>
+
+          {/* Section 6 — causal rules that fired on top of the
+              weighted-sum baseline. Collapsible; opens by default
+              when present because the explanation is genuinely useful. */}
+          <TriggeredRulesList rules={result.triggeredRules ?? []} />
 
           <div className="kg-actions">
             <button className="kg-btn kg-btn-primary" onClick={onPause}>

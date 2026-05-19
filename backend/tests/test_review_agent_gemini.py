@@ -99,8 +99,12 @@ def test_run_uses_gemini_when_client_available(monkeypatch):
 
     assert result.score == 73
     assert result.label == "Şüpheli"
-    assert [f.severity for f in result.findings] == ["risk", "warn"]
+    # The two findings Gemini returned, plus an always-appended trust
+    # headline so downstream UI / decision_agent has a stable summary line.
+    severities = [f.severity for f in result.findings]
+    assert severities[:2] == ["risk", "warn"]
     assert "jenerik" in result.findings[0].message
+    assert "Güven skoru" in result.findings[-1].message
 
     # The prompt was constructed and sent through.
     call = fake_client.models.last_call

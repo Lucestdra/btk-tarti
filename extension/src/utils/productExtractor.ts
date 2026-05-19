@@ -299,6 +299,51 @@ function readFromOg(): Partial<Product> {
   };
 }
 
+// ---------- Legal disclosure: 30 günün en düşük fiyatı ----------
+
+/**
+ * Parses the merchant's legally-required 30-day-low disclosure from the
+ * product page. Turkish consumer-protection regulation (Ticari Reklam
+ * Yön. m. 14/b) mandates this text near the discount badge whenever an
+ * "indirim öncesi" price is shown — Trendyol, Hepsiburada, N11, and
+ * most others now render it consistently.
+ *
+ * Returns the numeric value on success, `undefined` when no match.
+ * The backend cross-checks this against our own price-history and
+ * Akakçe to flag inflated original-price claims.
+ *
+ * Match patterns (case-insensitive):
+ *   - "Son 30 gün içinde uygulanan en düşük fiyat: ₺X"
+ *   - "30 günün en düşük fiyatı: ₺X"
+ *   - "Geçen 30 günün en düşük fiyatı X TL"
+ */
+export function extractLegalLowestPrice30d(root: ParentNode = document): number | undefined {
+  // Pull a snippet of text from likely containers first to keep the
+  // regex window small. The disclosure usually lives in the price area.
+  const containers = root.querySelectorAll<HTMLElement>(
+    "[class*='price'], [class*='Price'], [data-test-id*='price'], [data-testid*='price'], .product-info, .product-detail",
+  );
+  for (const el of Array.from(containers)) {
+    const txt = (el.textContent || "").replace(/\s+/g, " ");
+    if (!/30\s*g[uü]n/i.test(txt)) continue;
+    const hit = txt.match(/(?:son\s+|ge[çc]en\s+)?30\s*g[uü]n(?:[uü]n|\s*i[çc]inde)?(?:[^₺TL\d]*?)([\d.,]{3,12})\s*(?:₺|TL)?/i);
+    if (hit) {
+      const n = parsePrice(hit[1]);
+      if (n !== undefined) return n;
+    }
+  }
+
+  // Fallback: scan the document text once for the same pattern. Bounded
+  // to a small slice so we don't pay for parsing the whole page text.
+  const body = (document.body?.textContent || "").replace(/\s+/g, " ").slice(0, 40_000);
+  const hit = body.match(/(?:son\s+|ge[çc]en\s+)?30\s*g[uü]n(?:[uü]n|\s*i[çc]inde)?(?:[^₺TL\d]*?)([\d.,]{3,12})\s*(?:₺|TL)?/i);
+  if (hit) {
+    const n = parsePrice(hit[1]);
+    if (n !== undefined) return n;
+  }
+  return undefined;
+}
+
 // ---------- Strategy 6: last-resort regex sweep ----------
 
 /**
@@ -462,7 +507,39 @@ function _extractOneReview(container: HTMLElement, sels: ReviewSelectors): Revie
   const dateEl = _firstElement(container, sels.date);
   const date = dateEl?.textContent?.trim() ?? "";
 
-  return { rating, text, date };
+  // Optional trust signals — leave the field unset (null) when the page
+  // doesn't expose it. The backend distinguishes null (unknown) from
+  // false (explicitly unverified) when computing verified-purchase ratio.
+  const authorEl = _firstElement(container, sels.author);
+  const author = authorEl?.textContent?.trim() || undefined;
+
+  let verifiedPurchase: boolean | null = null;
+  if (sels.verified && sels.verified.length > 0) {
+    const verifiedEl = _firstElement(container, sels.verified);
+    if (verifiedEl) {
+      // Presence alone is the badge for most platforms; some pages
+      // toggle by class so accept "true"/"verified" textContent too.
+      const txt = (verifiedEl.textContent || "").trim().toLowerCase();
+      verifiedPurchase = txt === "" || /verified|onaylı|onayli|true|yes/.test(txt) ? true : false;
+    }
+  }
+
+  let helpfulCount: number | undefined;
+  if (sels.helpful && sels.helpful.length > 0) {
+    const helpfulEl = _firstElement(container, sels.helpful);
+    const raw = helpfulEl?.textContent?.trim();
+    const n = raw ? parseInt(raw.replace(/\D/g, ""), 10) : NaN;
+    if (Number.isFinite(n) && n >= 0) helpfulCount = n;
+  }
+
+  return {
+    rating,
+    text,
+    date,
+    author,
+    verifiedPurchase: verifiedPurchase ?? undefined,
+    helpfulCount,
+  };
 }
 
 export function extractReviews(host: Host, root: ParentNode = document): Review[] {
@@ -615,6 +692,7 @@ export function buildAnalyzeRequest(
     reviewCount: basics.reviewCount,
     url: location.href,
     imageUrl: basics.imageUrl,
+    legalLowestPrice30d: extractLegalLowestPrice30d(),
   };
 
   // Reviews: only what we scraped from the live page. Never substitute

@@ -37,6 +37,10 @@ class AnalysisState(TypedDict, total=False):
     returns `{"review": ...}`, price_node returns `{"price": ...}`, etc.
     LangGraph merges partial dicts by overwriting keys, so the four
     signal agents never conflict.
+
+    ``force_refresh`` is threaded through so the cache-aware agents
+    (review, decision) can bypass their Gemini response cache when the
+    caller asks for a fresh re-analysis.
     """
 
     request: AnalyzeRequest
@@ -45,10 +49,11 @@ class AnalysisState(TypedDict, total=False):
     budget: AgentResult
     impulse: AgentResult
     response: AnalyzeResponse
+    force_refresh: bool
 
 
 def _review_node(state: AnalysisState) -> dict:
-    return {"review": review_agent.run(state["request"])}
+    return {"review": review_agent.run(state["request"], force_refresh=state.get("force_refresh", False))}
 
 
 def _price_node(state: AnalysisState) -> dict:
@@ -70,6 +75,7 @@ def _decision_node(state: AnalysisState) -> dict:
         price=state["price"],
         budget=state["budget"],
         impulse=state["impulse"],
+        force_refresh=state.get("force_refresh", False),
     )
     return {"response": response}
 
@@ -97,9 +103,11 @@ def _build_compiled_graph():
 _COMPILED = _build_compiled_graph()
 
 
-def run(request: AnalyzeRequest) -> AnalyzeResponse:
+def run(request: AnalyzeRequest, *, force_refresh: bool = False) -> AnalyzeResponse:
     """Synchronously execute the graph and return the final response."""
-    final_state: Optional[AnalysisState] = _COMPILED.invoke({"request": request})
+    final_state: Optional[AnalysisState] = _COMPILED.invoke(
+        {"request": request, "force_refresh": force_refresh}
+    )
     if not final_state or "response" not in final_state:
         raise RuntimeError("Graph terminated without producing a response.")
     return final_state["response"]

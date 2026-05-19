@@ -27,8 +27,10 @@ from typing import List, Literal, Tuple
 
 from pydantic import BaseModel, Field
 
+from app.agents._decision_rules import evaluate as evaluate_rules
 from app.agents._gemini_client import get_client, get_model_name
-from app.core.cache import gemini_cache
+from app.agents._gemini_resilience import gemini_call
+from app.core.cache import DECISION_CACHE_TTL, gemini_cache
 from app.models.schemas import (
     AgentFinding,
     AgentResult,
@@ -36,6 +38,7 @@ from app.models.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
     Decision,
+    TriggeredRule,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,8 +97,18 @@ def run(
     price: AgentResult,
     budget: AgentResult,
     impulse: AgentResult,
+    *,
+    force_refresh: bool = False,
 ) -> AnalyzeResponse:
     decision, risk_score, label = _compute_decision(review, price, budget, impulse)
+
+    # Section 6 — causal red-flag tree. Layers AND/OR rules over tagged
+    # findings on top of the weighted-sum baseline. Triggered rules are
+    # surfaced both as a structured response field and as additional
+    # context for the narration prompt.
+    agent_map = _agent_map_signals_only(review, price, budget, impulse)
+    decision, risk_score, triggered = evaluate_rules(agent_map, decision, risk_score)
+    label = _label_for(decision)
 
     client = get_client()
     if client is not None:
@@ -103,6 +116,8 @@ def run(
             return _build_with_gemini(
                 client, req, decision, risk_score, label,
                 review=review, price=price, budget=budget, impulse=impulse,
+                triggered_rules=triggered,
+                force_refresh=force_refresh,
             )
         except Exception as exc:  # noqa: BLE001 - fall back on any Gemini error
             logger.warning("Gemini decision narration başarısız, heuristik fallback: %s", exc)
@@ -110,6 +125,38 @@ def run(
     return _build_heuristic(
         req, decision, risk_score, label,
         review=review, price=price, budget=budget, impulse=impulse,
+        triggered_rules=triggered,
+    )
+
+
+def _label_for(decision: Decision) -> str:
+    if decision == "green":
+        return "Yeşil"
+    if decision == "yellow":
+        return "Sarı"
+    return "Kırmızı"
+
+
+def _agent_map_signals_only(
+    review: AgentResult,
+    price: AgentResult,
+    budget: AgentResult,
+    impulse: AgentResult,
+) -> AgentResultMap:
+    """Build an AgentResultMap for the rule engine.
+
+    The rule engine only needs the four signal agents (the decision
+    agent's result is what we're computing). Stub the decisionAgent
+    field with an empty placeholder; the real one is filled in by
+    ``_make_agent_map`` for the final response.
+    """
+    placeholder = AgentResult(score=0, label="", findings=[])
+    return AgentResultMap(
+        reviewAgent=review,
+        priceAgent=price,
+        budgetAgent=budget,
+        impulseAgent=impulse,
+        decisionAgent=placeholder,
     )
 
 
@@ -117,6 +164,11 @@ def run(
 
 
 class _GeminiNarration(BaseModel):
+    # 1-2 sentence chain-of-thought BEFORE the user-facing narration.
+    # The model explicitly weighs which agent findings dominate; we log
+    # this for observability without surfacing it to the user. Optional
+    # so cached responses from before the rollout still parse.
+    reasoning: str | None = Field(default=None, max_length=400)
     summary: str = Field(min_length=8, max_length=160)
     reasons: List[str] = Field(min_length=2, max_length=4)
     recommendedAction: str = Field(min_length=4, max_length=80)
@@ -156,17 +208,26 @@ def _build_gemini_prompt(
         f"{format_agent('Bütçe Ajanı', budget)}\n\n"
         f"{format_agent('Dürtü Ajanı', impulse)}\n\n"
         "Çıktı kuralları:\n"
+        "- reasoning: 1-2 cümle. Hangi ajan bulgularının verdiği sürüklediğini ve hangilerinin "
+        "ağırlık almadığını açıkla. Bu alan kullanıcıya gösterilmez; iç denetim/log içindir.\n"
         "- summary: 1 cümle, ≤140 karakter. Karar rengini ima eder ama 'yeşil/sarı/kırmızı' "
         "kelimesini kullanma; verdiğin Tür eki ile durumu özetle.\n"
         "- reasons: 3 madde, her biri ≤120 karakter. Yukarıdaki ajan bulgularını sentezleyerek "
         "yaz; aynı sayıyı veya ifadeyi farklı kelimelerle iki kez kullanma.\n"
         "- recommendedAction: kısa Türkçe komut. Yeşilde 'Satın almaya devam edebilirsin', "
         "sarıda 'Birkaç noktayı tekrar gözden geçir', kırmızıda '30 saniye düşün' "
-        "ifadelerine yakın ama doğal varyasyon olabilir."
+        "ifadelerine yakın ama doğal varyasyon olabilir.\n\n"
+        "ÖNEMLİ: önce reasoning'i doldur, oradaki düşünceyle tutarlı bir özet ve gerekçe üret."
     )
 
 
+def _url_hash(url: str) -> str:
+    """Short hash of a URL, used as a key segment for targeted invalidation."""
+    return hashlib.sha1((url or "").encode("utf-8")).hexdigest()[:16]
+
+
 def _narration_cache_key(
+    req: AnalyzeRequest,
     decision: Decision,
     risk_score: int,
     review: AgentResult,
@@ -180,6 +241,11 @@ def _narration_cache_key(
     fingerprints (score + label + findings) will produce identical
     narration prose — safe to share. Model name is part of the key so
     swapping the underlying model invalidates the cache automatically.
+
+    The ``u=...`` and ``p=...`` segments scope the key to (user, url) so
+    :func:`app.core.cache.invalidate_for_user` /
+    :func:`app.core.cache.invalidate_for_url` can drop just the affected
+    entries when a budget edit or new price observation lands.
     """
 
     def fp(agent: AgentResult) -> list:
@@ -201,7 +267,8 @@ def _narration_cache_key(
         ],
         ensure_ascii=False,
     ).encode("utf-8")
-    return "dec:" + hashlib.sha256(blob).hexdigest()
+    digest = hashlib.sha256(blob).hexdigest()
+    return f"dec::u={req.userId}:p={_url_hash(req.product.url)}:{digest}"
 
 
 def _build_with_gemini(
@@ -215,21 +282,26 @@ def _build_with_gemini(
     price: AgentResult,
     budget: AgentResult,
     impulse: AgentResult,
+    triggered_rules: List[TriggeredRule],
+    force_refresh: bool = False,
 ) -> AnalyzeResponse:
-    cache_key = _narration_cache_key(decision, risk_score, review, price, budget, impulse)
-    narration = gemini_cache.get(cache_key)
+    cache_key = _narration_cache_key(req, decision, risk_score, review, price, budget, impulse)
+    narration = None if force_refresh else gemini_cache.get(cache_key)
 
     if narration is None:
         prompt = _build_gemini_prompt(decision, risk_score, review, price, budget, impulse)
-        response = client.models.generate_content(
-            model=get_model_name(),
-            contents=prompt,
-            config={
-                "system_instruction": _SYSTEM_INSTRUCTION,
-                "response_mime_type": "application/json",
-                "response_schema": _GeminiNarration,
-                "temperature": 0.35,
-            },
+        response = gemini_call(
+            lambda: client.models.generate_content(
+                model=get_model_name(),
+                contents=prompt,
+                config={
+                    "system_instruction": _SYSTEM_INSTRUCTION,
+                    "response_mime_type": "application/json",
+                    "response_schema": _GeminiNarration,
+                    "temperature": 0.35,
+                },
+            ),
+            label="decision_agent",
         )
 
         parsed = getattr(response, "parsed", None) or _safe_parse(response)
@@ -240,7 +312,13 @@ def _build_with_gemini(
         else:
             narration = _GeminiNarration.model_validate_json(response.text)
 
-        gemini_cache.set(cache_key, narration)
+        if narration.reasoning:
+            logger.info(
+                "decision_agent.reasoning",
+                extra={"event": "decision_agent.reasoning", "reasoning": narration.reasoning[:300]},
+            )
+
+        gemini_cache.set(cache_key, narration, ttl=DECISION_CACHE_TTL)
 
     # Trim to exactly 3 reasons for the contract.
     reasons = list(narration.reasons)[:3]
@@ -254,6 +332,7 @@ def _build_with_gemini(
         reasons=reasons,
         agents=_make_agent_map(decision, risk_score, label, review, price, budget, impulse),
         recommendedAction=narration.recommendedAction.strip(),
+        triggeredRules=triggered_rules,
     )
 
 
@@ -280,9 +359,17 @@ def _build_heuristic(
     price: AgentResult,
     budget: AgentResult,
     impulse: AgentResult,
+    triggered_rules: List[TriggeredRule],
 ) -> AnalyzeResponse:
     summary = _summary_template(decision)
     reasons = _pick_top_reasons(review, price, budget, impulse) or ["Yeterli sinyal bulunamadı."]
+    # When the rule engine fired, surface the strongest rule's
+    # explanation as the leading reason — it's almost always the most
+    # actionable summary of why the verdict landed where it did.
+    if triggered_rules:
+        top_rule = max(triggered_rules, key=lambda r: 1 if r.severity == "risk" else 0)
+        if top_rule.explanation not in reasons:
+            reasons = [top_rule.explanation, *reasons][:3]
     return AnalyzeResponse(
         decision=decision,
         riskScore=risk_score,
@@ -290,6 +377,7 @@ def _build_heuristic(
         reasons=reasons,
         agents=_make_agent_map(decision, risk_score, label, review, price, budget, impulse),
         recommendedAction=_recommended_action(decision),
+        triggeredRules=triggered_rules,
     )
 
 

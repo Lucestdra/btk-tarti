@@ -33,6 +33,16 @@ export interface ReviewSelectors {
   text: string[];
   /** Element holding the date (ISO or platform-native string). */
   date?: string[];
+  /** Element holding the reviewer name / handle. */
+  author?: string[];
+  /**
+   * Element whose mere presence (or textContent) flags a verified-purchase
+   * badge. When matched we set `verifiedPurchase: true`; absence is treated
+   * as `null` (unknown), not false — many products show no badge at all.
+   */
+  verified?: string[];
+  /** Element with a number indicating helpful votes / agreements. */
+  helpful?: string[];
   /** Maximum reviews to extract per page (cap on payload size). */
   maxItems?: number;
 }
@@ -116,7 +126,21 @@ export const PLATFORM_PACKS: Partial<Record<Host, PlatformPack>> = {
         ".pr-rnr-com-d",
         "time",
       ],
-      maxItems: 25,
+      author: [
+        ".comment-info-item",
+        ".pr-rnr-com-usr",
+        "[class*='ReviewCard-author']",
+      ],
+      verified: [
+        ".pr-xc-w-vr",
+        "[class*='VerifiedPurchaseBadge']",
+        "[data-testid='verified-purchase']",
+      ],
+      helpful: [
+        ".pr-xc-w-hlp .count",
+        "[class*='HelpfulButton'] [class*='count']",
+      ],
+      maxItems: 100,
     },
   },
 
@@ -181,7 +205,21 @@ export const PLATFORM_PACKS: Partial<Record<Host, PlatformPack>> = {
         ".review-date",
         "time",
       ],
-      maxItems: 25,
+      author: [
+        "[data-test-id='review-author']",
+        ".review-author",
+        ".reviewer-name",
+      ],
+      verified: [
+        "[data-test-id='verified-purchase']",
+        ".verified-purchase",
+        ".verified-badge",
+      ],
+      helpful: [
+        "[data-test-id='helpful-count']",
+        ".helpful-count",
+      ],
+      maxItems: 100,
     },
   },
 
@@ -244,7 +282,15 @@ export const PLATFORM_PACKS: Partial<Record<Host, PlatformPack>> = {
         ".commentDate",
         ".comment-date",
       ],
-      maxItems: 25,
+      author: [
+        ".commentUserName",
+        ".comment-user",
+      ],
+      verified: [
+        ".verifiedPurchase",
+        ".verified-badge",
+      ],
+      maxItems: 100,
     },
   },
 
@@ -464,5 +510,8 @@ export const DEMO_REVIEW_SELECTORS: ReviewSelectors = {
   rating: ["[data-kg-rating]"],
   text: ["[data-kg-review-text]"],
   date: [".review-date", "[data-kg-review-date]"],
-  maxItems: 50,
+  author: ["[data-kg-review-author]"],
+  verified: ["[data-kg-review-verified]"],
+  helpful: ["[data-kg-review-helpful]"],
+  maxItems: 100,
 };

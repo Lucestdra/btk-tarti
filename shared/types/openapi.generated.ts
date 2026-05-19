@@ -44,6 +44,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cache/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Gemini cache içeriğini boşalt (admin)
+         * @description Hedefli temizleme: ?userId=... verilirse o kullanıcıya ait, ?url=... verilirse o URL'ye ait kayıtlar düşürülür. Hiçbiri verilmezse tüm cache temizlenir. THUNDRLY_ADMIN_TOKEN gerekli (tanımlı değilse açık).
+         */
+        post: operations["cache_purge_api_cache_purge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cache/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Gemini cache hit/miss istatistikleri
+         * @description Bellek içi Gemini response cache'inin sayaçlarını döner. Hit oranı, evictions ve invalidations metriklerini gözlemlemek için kullan. THUNDRLY_ADMIN_TOKEN tanımlıysa Authorization header'ında geçirilmesi gerekir; tanımlı değilse herkese açık.
+         */
+        get: operations["cache_stats_api_cache_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -148,6 +188,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user-budget/global": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Kullanıcının genel aylık bütçesini getir
+         * @description Hibrit bütçe modelinde **birincil** alan. Kullanıcı yalnızca bu değeri girerse de bütçe ajanı tüm satın almaları bu envelope'a karşı puanlar. Kayıt yoksa permissive bir varsayılan döner.
+         */
+        get: operations["get_user_budget_global_api_user_budget_global_get"];
+        /**
+         * Kullanıcının genel aylık bütçesini kaydet
+         * @description GLOBAL sentinel satırını upsert eder. ``categoryLimit`` otomatik olarak ``monthlyLimit`` değerine eşitlenir. Per-category satırlar isteğe bağlı, ayrı uçla yönetilir.
+         */
+        put: operations["put_user_budget_global_api_user_budget_global_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user-budgets": {
         parameters: {
             query?: never;
@@ -157,7 +221,7 @@ export interface paths {
         };
         /**
          * Kullanıcının tüm bütçe özetini getir (popup için)
-         * @description Tek kullanıcı için aylık limit + her kategori limiti ve mevcut ay harcaması döner. Hiç kayıt yoksa boş özet döner (categories=[], spent=0).
+         * @description Tek kullanıcı için aylık limit + her kategori limiti ve mevcut ay harcaması döner. GLOBAL sentinel satırı listede yer almaz; aylık genel limit ayrı bir alanda döner. Hiç kayıt yoksa boş özet döner (categories=[], spent=0).
          */
         get: operations["get_user_budgets_summary_api_user_budgets_get"];
         put?: never;
@@ -181,6 +245,8 @@ export interface components {
              * @enum {string}
              */
             severity: "info" | "warn" | "risk";
+            /** Tag */
+            tag?: string | null;
         };
         /** AgentResult */
         AgentResult: {
@@ -229,6 +295,8 @@ export interface components {
             riskScore: number;
             /** Summary */
             summary: string;
+            /** Triggeredrules */
+            triggeredRules?: components["schemas"]["TriggeredRule"][];
         };
         /**
          * CategoryBudget
@@ -301,6 +369,8 @@ export interface components {
             currency: "TRY" | "USD" | "EUR";
             /** Imageurl */
             imageUrl?: string | null;
+            /** Legallowestprice30D */
+            legalLowestPrice30d?: number | null;
             /** Originalprice */
             originalPrice?: number | null;
             /** Price */
@@ -363,10 +433,14 @@ export interface components {
             author?: string | null;
             /** Date */
             date: string;
+            /** Helpfulcount */
+            helpfulCount?: number | null;
             /** Rating */
             rating: number;
             /** Text */
             text: string;
+            /** Verifiedpurchase */
+            verifiedPurchase?: boolean | null;
         };
         /** SessionContext */
         SessionContext: {
@@ -380,6 +454,27 @@ export interface components {
             searchedBefore?: boolean | null;
             /** Timeonpageseconds */
             timeOnPageSeconds: number;
+        };
+        /**
+         * TriggeredRule
+         * @description One causal rule that fired in the decision pass.
+         *
+         *     The rule engine evaluates AND/OR combinations over tagged findings
+         *     (e.g. ``suspiciousDiscount + lowReviewTrust``) and emits one of these
+         *     for each rule it triggered. The panel renders them as a small
+         *     "Tetiklenen kurallar" section so the user can see WHY the verdict
+         *     landed where it did beyond the bare risk score.
+         */
+        TriggeredRule: {
+            /** Explanation */
+            explanation: string;
+            /** Name */
+            name: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "info" | "warn" | "risk";
         };
         /** UserBudget */
         UserBudget: {
@@ -440,7 +535,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     analyze_purchase_api_analyze_purchase_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description True olduğunda Gemini yanıt cache'i atlanır — kullanıcı panelden 'Yeniden analiz et' istediğinde gönder. */
+                force_refresh?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -473,7 +571,9 @@ export interface operations {
     };
     analyze_purchase_stream_api_analyze_purchase_stream_post: {
         parameters: {
-            query?: never;
+            query?: {
+                force_refresh?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -490,6 +590,71 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cache_purge_api_cache_purge_post: {
+        parameters: {
+            query?: {
+                userId?: string | null;
+                url?: string | null;
+            };
+            header?: {
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cache_stats_api_cache_stats_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
             };
             /** @description Validation Error */
             422: {
@@ -645,6 +810,72 @@ export interface operations {
             query: {
                 userId: string;
                 category: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserBudget"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserBudget"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_budget_global_api_user_budget_global_get: {
+        parameters: {
+            query: {
+                userId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserBudget"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_user_budget_global_api_user_budget_global_put: {
+        parameters: {
+            query: {
+                userId: string;
             };
             header?: never;
             path?: never;

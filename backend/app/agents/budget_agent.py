@@ -94,6 +94,7 @@ def run(req: AnalyzeRequest) -> AgentResult:
                     f"Bu ay {req.product.category.lower()} bütçesini zaten "
                     f"%{_pct(b.categorySpent, b.categoryLimit)} oranında aşmış durumdasın."
                 ),
+                tag="budgetOverflow",
             )
         )
     elif cat_after > b.categoryLimit:
@@ -105,6 +106,7 @@ def run(req: AnalyzeRequest) -> AgentResult:
                     f"Bu satın alma sonrası {req.product.category.lower()} kategorisi "
                     f"limitin %{cat_pct}'sine çıkacak (₺{over:.0f} aşım)."
                 ),
+                tag="budgetOverflow",
             )
         )
     elif cat_after > b.categoryLimit * 0.85:
@@ -124,6 +126,7 @@ def run(req: AnalyzeRequest) -> AgentResult:
             AgentFinding(
                 severity="risk",
                 message=f"Aylık bütçeyi %{mon_pct}'e taşıyacak; ₺{over:.0f} aşım.",
+                tag="budgetOverflow",
             )
         )
     elif monthly_after > b.monthlyLimit * 0.9:

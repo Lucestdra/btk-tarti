@@ -15,6 +15,17 @@
             ],
             "title": "Severity",
             "type": "string"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
           }
         },
         "required": [
@@ -163,6 +174,13 @@
           "summary": {
             "title": "Summary",
             "type": "string"
+          },
+          "triggeredRules": {
+            "items": {
+              "$ref": "#/components/schemas/TriggeredRule"
+            },
+            "title": "Triggeredrules",
+            "type": "array"
           }
         },
         "required": [
@@ -308,6 +326,8 @@
       "Product": {
         "properties": {
           "category": {
+            "maxLength": 128,
+            "minLength": 1,
             "title": "Category",
             "type": "string"
           },
@@ -324,6 +344,7 @@
           "imageUrl": {
             "anyOf": [
               {
+                "maxLength": 2048,
                 "type": "string"
               },
               {
@@ -332,9 +353,22 @@
             ],
             "title": "Imageurl"
           },
+          "legalLowestPrice30d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legallowestprice30D"
+          },
           "originalPrice": {
             "anyOf": [
               {
+                "exclusiveMaximum": 10000000.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -344,12 +378,16 @@
             "title": "Originalprice"
           },
           "price": {
+            "exclusiveMaximum": 10000000.0,
+            "minimum": 0.0,
             "title": "Price",
             "type": "number"
           },
           "rating": {
             "anyOf": [
               {
+                "maximum": 5.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -361,6 +399,8 @@
           "reviewCount": {
             "anyOf": [
               {
+                "exclusiveMaximum": 10000000.0,
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -370,10 +410,14 @@
             "title": "Reviewcount"
           },
           "title": {
+            "maxLength": 512,
+            "minLength": 1,
             "title": "Title",
             "type": "string"
           },
           "url": {
+            "maxLength": 2048,
+            "minLength": 8,
             "title": "Url",
             "type": "string"
           }
@@ -480,6 +524,7 @@
           "author": {
             "anyOf": [
               {
+                "maxLength": 128,
                 "type": "string"
               },
               {
@@ -489,16 +534,43 @@
             "title": "Author"
           },
           "date": {
+            "maxLength": 32,
             "title": "Date",
             "type": "string"
           },
+          "helpfulCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Helpfulcount"
+          },
           "rating": {
+            "maximum": 5.0,
+            "minimum": 0.0,
             "title": "Rating",
             "type": "number"
           },
           "text": {
+            "maxLength": 2048,
+            "minLength": 1,
             "title": "Text",
             "type": "string"
+          },
+          "verifiedPurchase": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifiedpurchase"
           }
         },
         "required": [
@@ -551,13 +623,50 @@
         "title": "SessionContext",
         "type": "object"
       },
+      "TriggeredRule": {
+        "description": "One causal rule that fired in the decision pass.\n\nThe rule engine evaluates AND/OR combinations over tagged findings\n(e.g. ``suspiciousDiscount + lowReviewTrust``) and emits one of these\nfor each rule it triggered. The panel renders them as a small\n\"Tetiklenen kurallar\" section so the user can see WHY the verdict\nlanded where it did beyond the bare risk score.",
+        "properties": {
+          "explanation": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warn",
+              "risk"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "severity",
+          "explanation"
+        ],
+        "title": "TriggeredRule",
+        "type": "object"
+      },
       "UserBudget": {
         "properties": {
           "categoryLimit": {
+            "exclusiveMaximum": 10000000.0,
+            "minimum": 0.0,
             "title": "Categorylimit",
             "type": "number"
           },
           "categorySpent": {
+            "exclusiveMaximum": 10000000.0,
+            "minimum": 0.0,
             "title": "Categoryspent",
             "type": "number"
           },
@@ -572,12 +681,16 @@
             "type": "string"
           },
           "monthlyLimit": {
+            "exclusiveMaximum": 10000000.0,
+            "exclusiveMinimum": 0.0,
             "title": "Monthlylimit",
             "type": "number"
           },
           "monthlySpent": {
             "anyOf": [
               {
+                "exclusiveMaximum": 10000000.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -688,11 +801,284 @@
       "post": {
         "description": "Ürün, yorum, fiyat geçmişi, bütçe ve oturum bilgisini alır; yeşil/sarı/kırmızı bir karar ve 3 gerekçe döner. `priceHistory` boş ise sunucu, ürün URL'sine ait crowdsource veritabanından son 90 günü çeker.",
         "operationId": "analyze_purchase_api_analyze_purchase_post",
+        "parameters": [
+          {
+            "description": "True olduğunda Gemini yanıt cache'i atlanır — kullanıcı panelden 'Yeniden analiz et' istediğinde gönder.",
+            "in": "query",
+            "name": "force_refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "True olduğunda Gemini yanıt cache'i atlanır — kullanıcı panelden 'Yeniden analiz et' istediğinde gönder.",
+              "title": "Force Refresh",
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnalyzeRequest"
+                "$ref": "#/components/schemas/AnalyzeRequest",
+                "examples": {
+                  "green": {
+                    "summary": "Gerçek indirim + planlı + bütçe içinde",
+                    "value": {
+                      "platform": "n11-demo",
+                      "priceHistory": [
+                        {
+                          "date": "2026-02-01",
+                          "price": 160
+                        },
+                        {
+                          "date": "2026-03-01",
+                          "price": 155
+                        },
+                        {
+                          "date": "2026-04-01",
+                          "price": 165
+                        },
+                        {
+                          "date": "2026-05-01",
+                          "price": 180
+                        },
+                        {
+                          "date": "2026-05-14",
+                          "price": 145
+                        }
+                      ],
+                      "product": {
+                        "category": "Kitap",
+                        "currency": "TRY",
+                        "imageUrl": "https://demo.local/img/sapiens.jpg",
+                        "originalPrice": 180,
+                        "price": 145,
+                        "rating": 4.8,
+                        "reviewCount": 5230,
+                        "title": "Sapiens: Hayvanlardan Tanrılara",
+                        "url": "https://demo.local/product/sapiens"
+                      },
+                      "reviews": [
+                        {
+                          "date": "2026-03-12",
+                          "rating": 5,
+                          "text": "Yuval Noah Harari'nin bakış açısı çok geniş, akıcı bir kitap."
+                        },
+                        {
+                          "date": "2026-03-18",
+                          "rating": 5,
+                          "text": "İnsanlık tarihini tek kitapta toparlayan harika bir eser."
+                        },
+                        {
+                          "date": "2026-04-02",
+                          "rating": 4,
+                          "text": "Bazı bölümler tartışmaya açık ama düşündürücü."
+                        },
+                        {
+                          "date": "2026-04-22",
+                          "rating": 5,
+                          "text": "Çevirisi başarılı, kağıt kalitesi iyi."
+                        }
+                      ],
+                      "session": {
+                        "clickSpeedMs": 2400,
+                        "currentHour": 16,
+                        "purchasesToday": 0,
+                        "searchedBefore": true,
+                        "timeOnPageSeconds": 210
+                      },
+                      "userBudget": {
+                        "categoryLimit": 500,
+                        "categorySpent": 80,
+                        "currency": "TRY",
+                        "monthlyLimit": 2500,
+                        "monthlySpent": 600
+                      },
+                      "userId": "demo-user"
+                    }
+                  },
+                  "red": {
+                    "summary": "Şüpheli indirim + bütçe aşımı + dürtüsel",
+                    "value": {
+                      "platform": "trendyol-demo",
+                      "priceHistory": [
+                        {
+                          "date": "2026-04-15",
+                          "price": 780
+                        },
+                        {
+                          "date": "2026-04-22",
+                          "price": 780
+                        },
+                        {
+                          "date": "2026-04-29",
+                          "price": 820
+                        },
+                        {
+                          "date": "2026-05-05",
+                          "price": 1650
+                        },
+                        {
+                          "date": "2026-05-10",
+                          "price": 1650
+                        },
+                        {
+                          "date": "2026-05-14",
+                          "price": 990
+                        }
+                      ],
+                      "product": {
+                        "category": "Giyim",
+                        "currency": "TRY",
+                        "imageUrl": "https://demo.local/img/hoodie.jpg",
+                        "originalPrice": 1650,
+                        "price": 990,
+                        "rating": 4.7,
+                        "reviewCount": 842,
+                        "title": "Oversize Siyah Hoodie",
+                        "url": "https://demo.local/product/hoodie"
+                      },
+                      "reviews": [
+                        {
+                          "date": "2026-05-10",
+                          "rating": 5,
+                          "text": "Çok güzel ürün hızlı kargo mükemmel kalite"
+                        },
+                        {
+                          "date": "2026-05-10",
+                          "rating": 5,
+                          "text": "Çok güzel ürün hızlı kargo kalite süper"
+                        },
+                        {
+                          "date": "2026-05-11",
+                          "rating": 5,
+                          "text": "Mükemmel kalite hızlı kargo tavsiye ederim"
+                        },
+                        {
+                          "date": "2026-05-11",
+                          "rating": 5,
+                          "text": "Çok güzel kalite hızlı kargo"
+                        },
+                        {
+                          "date": "2026-05-11",
+                          "rating": 5,
+                          "text": "Mükemmel ürün hızlı kargo süper kalite"
+                        },
+                        {
+                          "date": "2026-05-12",
+                          "rating": 5,
+                          "text": "Tam istediğim gibi geldi tavsiye ederim"
+                        },
+                        {
+                          "date": "2026-05-12",
+                          "rating": 5,
+                          "text": "Çok güzel ürün hızlı kargo mükemmel"
+                        },
+                        {
+                          "date": "2026-04-15",
+                          "rating": 2,
+                          "text": "Beden uymadı, kumaş beklediğim gibi değildi."
+                        }
+                      ],
+                      "session": {
+                        "clickSpeedMs": 420,
+                        "currentHour": 23,
+                        "purchasesToday": 2,
+                        "searchedBefore": false,
+                        "timeOnPageSeconds": 18
+                      },
+                      "userBudget": {
+                        "categoryLimit": 1000,
+                        "categorySpent": 1700,
+                        "currency": "TRY",
+                        "monthlyLimit": 3000,
+                        "monthlySpent": 2400
+                      },
+                      "userId": "demo-user"
+                    }
+                  },
+                  "yellow": {
+                    "summary": "Kısmen manipüle fiyat + sınırda bütçe",
+                    "value": {
+                      "platform": "hepsiburada-demo",
+                      "priceHistory": [
+                        {
+                          "date": "2026-04-15",
+                          "price": 1199
+                        },
+                        {
+                          "date": "2026-04-25",
+                          "price": 1199
+                        },
+                        {
+                          "date": "2026-05-01",
+                          "price": 1899
+                        },
+                        {
+                          "date": "2026-05-08",
+                          "price": 1899
+                        },
+                        {
+                          "date": "2026-05-14",
+                          "price": 1450
+                        }
+                      ],
+                      "product": {
+                        "category": "Elektronik",
+                        "currency": "TRY",
+                        "imageUrl": "https://demo.local/img/headphones.jpg",
+                        "originalPrice": 1899,
+                        "price": 1450,
+                        "rating": 4.4,
+                        "reviewCount": 312,
+                        "title": "Kablosuz Kulaklık",
+                        "url": "https://demo.local/product/headphones"
+                      },
+                      "reviews": [
+                        {
+                          "date": "2026-05-09",
+                          "rating": 5,
+                          "text": "Ses kalitesi beklediğimden iyi, gürültü engelleme başarılı."
+                        },
+                        {
+                          "date": "2026-05-10",
+                          "rating": 4,
+                          "text": "Pil ömrü iyi ama kulaklık biraz sıkıyor."
+                        },
+                        {
+                          "date": "2026-05-11",
+                          "rating": 5,
+                          "text": "Çok güzel ürün hızlı kargo."
+                        },
+                        {
+                          "date": "2026-05-12",
+                          "rating": 5,
+                          "text": "Hızlı kargo çok güzel mükemmel kalite."
+                        },
+                        {
+                          "date": "2026-05-13",
+                          "rating": 3,
+                          "text": "Mikrofon kalitesi orta, ses kalitesi iyi."
+                        }
+                      ],
+                      "session": {
+                        "clickSpeedMs": 900,
+                        "currentHour": 22,
+                        "purchasesToday": 1,
+                        "searchedBefore": false,
+                        "timeOnPageSeconds": 28
+                      },
+                      "userBudget": {
+                        "categoryLimit": 1500,
+                        "categorySpent": 700,
+                        "currency": "TRY",
+                        "monthlyLimit": 3500,
+                        "monthlySpent": 2100
+                      },
+                      "userId": "demo-user"
+                    }
+                  }
+                }
               }
             }
           },
@@ -727,6 +1113,18 @@
       "post": {
         "description": "Her satır bağımsız bir JSON nesnesidir (`application/x-ndjson`). Sıra: 4 paralel sinyal ajanı için `node_finished`, ardından decision için `node_finished`, en sonda `verdict` (tam AnalyzeResponse). Hata olursa son satır `error` olur. Karar mantığı normal endpoint ile aynıdır; tek fark stream şeklidir.",
         "operationId": "analyze_purchase_stream_api_analyze_purchase_stream_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "force_refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Force Refresh",
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -753,6 +1151,134 @@
           }
         },
         "summary": "Aynı analiz, ajan tamamlanma olaylarını NDJSON ile streamler"
+      }
+    },
+    "/api/cache/purge": {
+      "post": {
+        "description": "Hedefli temizleme: ?userId=... verilirse o kullanıcıya ait, ?url=... verilirse o URL'ye ait kayıtlar düşürülür. Hiçbiri verilmezse tüm cache temizlenir. THUNDRLY_ADMIN_TOKEN gerekli (tanımlı değilse açık).",
+        "operationId": "cache_purge_api_cache_purge_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "userId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Userid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "url",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Url"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Cache Purge Api Cache Purge Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Gemini cache içeriğini boşalt (admin)"
+      }
+    },
+    "/api/cache/stats": {
+      "get": {
+        "description": "Bellek içi Gemini response cache'inin sayaçlarını döner. Hit oranı, evictions ve invalidations metriklerini gözlemlemek için kullan. THUNDRLY_ADMIN_TOKEN tanımlıysa Authorization header'ında geçirilmesi gerekir; tanımlı değilse herkese açık.",
+        "operationId": "cache_stats_api_cache_stats_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Cache Stats Api Cache Stats Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Gemini cache hit/miss istatistikleri"
       }
     },
     "/api/health": {
@@ -883,6 +1409,8 @@
             "name": "userId",
             "required": true,
             "schema": {
+              "maxLength": 64,
+              "minLength": 1,
               "title": "Userid",
               "type": "string"
             }
@@ -892,6 +1420,8 @@
             "name": "category",
             "required": true,
             "schema": {
+              "maxLength": 64,
+              "minLength": 1,
               "title": "Category",
               "type": "string"
             }
@@ -930,6 +1460,8 @@
             "name": "userId",
             "required": true,
             "schema": {
+              "maxLength": 64,
+              "minLength": 1,
               "title": "Userid",
               "type": "string"
             }
@@ -939,6 +1471,8 @@
             "name": "category",
             "required": true,
             "schema": {
+              "maxLength": 64,
+              "minLength": 1,
               "title": "Category",
               "type": "string"
             }
@@ -979,9 +1513,101 @@
         "summary": "Kullanıcı bütçesini (kategori bazlı) kaydet/güncelle"
       }
     },
+    "/api/user-budget/global": {
+      "get": {
+        "description": "Hibrit bütçe modelinde **birincil** alan. Kullanıcı yalnızca bu değeri girerse de bütçe ajanı tüm satın almaları bu envelope'a karşı puanlar. Kayıt yoksa permissive bir varsayılan döner.",
+        "operationId": "get_user_budget_global_api_user_budget_global_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Userid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBudget"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Kullanıcının genel aylık bütçesini getir"
+      },
+      "put": {
+        "description": "GLOBAL sentinel satırını upsert eder. ``categoryLimit`` otomatik olarak ``monthlyLimit`` değerine eşitlenir. Per-category satırlar isteğe bağlı, ayrı uçla yönetilir.",
+        "operationId": "put_user_budget_global_api_user_budget_global_put",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Userid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserBudget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBudget"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Kullanıcının genel aylık bütçesini kaydet"
+      }
+    },
     "/api/user-budgets": {
       "get": {
-        "description": "Tek kullanıcı için aylık limit + her kategori limiti ve mevcut ay harcaması döner. Hiç kayıt yoksa boş özet döner (categories=[], spent=0).",
+        "description": "Tek kullanıcı için aylık limit + her kategori limiti ve mevcut ay harcaması döner. GLOBAL sentinel satırı listede yer almaz; aylık genel limit ayrı bir alanda döner. Hiç kayıt yoksa boş özet döner (categories=[], spent=0).",
         "operationId": "get_user_budgets_summary_api_user_budgets_get",
         "parameters": [
           {
@@ -989,6 +1615,8 @@
             "name": "userId",
             "required": true,
             "schema": {
+              "maxLength": 64,
+              "minLength": 1,
               "title": "Userid",
               "type": "string"
             }

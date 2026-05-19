@@ -174,3 +174,97 @@ sinyalin kaybolmaması için.
 - Backend CORS yalnızca `localhost:3000` ve `chrome-extension://*` kabul eder.
 - MVP'de kullanıcı kimliği yok; üretimde Gemini'a yorumlar gönderilirken
   kişisel bilgi (kullanıcı adı vb.) filtrelenmeli.
+
+---
+
+## Section 4 — Mimari Denetimi (2026-05)
+
+Hackathon kapsamlı kritik bug düzeltmelerinden (1.1–2.0) ve UI yenilemesinden
+(3) sonra yapılan mimari denetim. Aşağıda mevcut durum + giderilen ve
+ertelenen sorunlar.
+
+### Mevcut Durum Diyagramı
+
+```
+┌─ Extension (MV3) ────────────────────────┐
+│  contentScript ─▶ productExtractor       │
+│       │              (5 katmanlı çıkarım)│
+│       ▼                                  │
+│  buildAnalyzeRequest                     │
+│       │                                  │
+│       ▼                                  │
+│  background.ts ─── HTTP ──┐              │
+│       │                   │              │
+│       ▼                   │              │
+│  Panel (Shadow DOM)       │              │
+│   + TaggedChips           │              │
+│   + verdict / agents      │              │
+└───────────────────────────│──────────────┘
+                            │
+                            ▼
+┌─ Backend (FastAPI) ─────────────────────┐
+│  routes.py                              │
+│   ├─ Pydantic validation (Field bounds) │
+│   ├─ Cache stats / purge (admin token)  │
+│   └─ Write hooks → cache invalidator    │
+│         │                               │
+│         ▼                               │
+│  services/                              │
+│   ├─ orchestrator    (hybrid budget    │
+│   │                   resolution + price │
+│   │                   history priority) │
+│   ├─ category_classifier (rules → tax.) │
+│   ├─ user_budget     (+ GLOBAL sentinel)│
+│   ├─ price_history   (median collapse)  │
+│   └─ external_price_history (Akakçe)    │
+│         │                               │
+│         ▼                               │
+│  agents/  (LangGraph: 4 paralel → 1)    │
+│   ├─ review_agent    Gemini + heuristik │
+│   ├─ price_agent     multi-source check │
+│   ├─ budget_agent    deterministic      │
+│   ├─ impulse_agent   deterministic      │
+│   └─ decision_agent  Gemini narration   │
+│                                         │
+│  core/                                  │
+│   ├─ cache          TTL+LRU+counters    │
+│   ├─ _gemini_resilience  retry+breaker  │
+│   └─ logging        structured JSON     │
+│                                         │
+│  db/  (SQLAlchemy + Alembic)            │
+│   ├─ price_observations  (url+ts index) │
+│   └─ user_budgets        (PK: uid+cat)  │
+└─────────────────────────────────────────┘
+```
+
+### Denetim Sonuçları
+
+| Konu | Durum | Karar |
+|---|---|---|
+| `GET /user-budgets` rotada iş mantığı | Düzeltildi | `summarize_for_user()` servisine taşındı. |
+| Query param validation eksikti | Düzeltildi | `Field(min_length=1, max_length=64)` userId/category için. |
+| `UserBudget` numerik sınır yoktu | Düzeltildi | `gt=0, lt=10_000_000` eklendi. |
+| Panel'de `useState` × 4 + `useRef` × 3 | Ertelendi | `useReducer` refactor riskli; izlenecek. |
+| `productExtractor` memoization yok | Geçerli değil | Sadece "Sepete Ekle" intercept'te bir kez çağrılıyor. |
+| `user_budgets(user_id, period_start)` indeksi | Ertelendi | Mevcut PK yeterli; ölçek büyürse eklenecek. |
+| Akakçe regex parser kırılgan | Ertelendi | Yasal disclosure (Sec 1.4) artık birincil; Akakçe ikincil. |
+
+### Cache + Resilience Karar Tablosu
+
+| Mekanizma | Konum | Davranış |
+|---|---|---|
+| Hit/miss telemetri | `core/cache.py` | `cache.hit` / `cache.miss` JSON log + `GET /api/cache/stats`. |
+| TTL kademesi | review 300s, decision 900s | `GEMINI_REVIEW_CACHE_TTL_SECONDS` / `..._DECISION_...` env. |
+| Hedefli invalidation | `invalidate_for_user`, `invalidate_for_url` | Write rotaları (PUT budget, POST observation/purchase). |
+| Manuel temizleme | `POST /api/cache/purge` | `THUNDRLY_ADMIN_TOKEN` opsiyonel guard. |
+| Force refresh | `?force_refresh=true` | Tek çağrı için cache'i bypass eder. |
+| Gemini retry | `_gemini_resilience.gemini_call` | 3 deneme, 0.1→0.4→1.6s + jitter. |
+| Circuit breaker | aynı modül | 3 ardışık hatadan sonra 30s. |
+
+### İleride Bakılacak Noktalar
+
+1. `useReducer` refactor: panel state machine'i tek dispatch'e indirgeyerek
+   yeni geliştiricinin onboarding süresini kısaltır.
+2. Akakçe için `selectolax` tabanlı parser + stored-fixture CI smoke testi.
+3. Multi-instance prod için Redis tabanlı cache + slowapi storage.
+4. Panel için axe-core entegrasyonu (a11y regresyon testi).

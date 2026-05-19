@@ -28,11 +28,18 @@ interface MessageOk { ok: true; data: AnalyzeResponse }
 interface MessageErr { ok: false; error: string }
 type Message = MessageOk | MessageErr;
 
-export async function analyzePurchase(req: AnalyzeRequest): Promise<AnalyzeResponse> {
+export async function analyzePurchase(
+  req: AnalyzeRequest,
+  options: { forceRefresh?: boolean } = {},
+): Promise<AnalyzeResponse> {
   try {
-    const resp = await chrome.runtime.sendMessage<{ type: "analyze"; payload: AnalyzeRequest }, Message>({
+    const resp = await chrome.runtime.sendMessage<
+      { type: "analyze"; payload: AnalyzeRequest; forceRefresh?: boolean },
+      Message
+    >({
       type: "analyze",
       payload: req,
+      forceRefresh: options.forceRefresh,
     });
     if (resp && resp.ok) {
       return resp.data;
@@ -61,6 +68,7 @@ export type StreamEvent =
 export function analyzePurchaseStream(
   req: AnalyzeRequest,
   onEvent: (event: StreamEvent) => void,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<AnalyzeResponse> {
   return new Promise((resolve, reject) => {
     let port: chrome.runtime.Port;
@@ -103,7 +111,7 @@ export function analyzePurchaseStream(
       }
     });
 
-    port.postMessage({ type: "start", payload: req });
+    port.postMessage({ type: "start", payload: req, forceRefresh: options.forceRefresh });
   });
 }
 
@@ -116,13 +124,14 @@ export function analyzePurchaseStream(
 export async function analyzePurchaseWithProgress(
   req: AnalyzeRequest,
   onEvent: (event: StreamEvent) => void,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<{ response: AnalyzeResponse; streamed: boolean }> {
   try {
-    const response = await analyzePurchaseStream(req, onEvent);
+    const response = await analyzePurchaseStream(req, onEvent, options);
     return { response, streamed: true };
   } catch (e) {
     console.warn("[Thundrly] streaming başarısız, tek seferlik fetch'e dönülüyor:", e);
-    const response = await analyzePurchase(req);
+    const response = await analyzePurchase(req, options);
     return { response, streamed: false };
   }
 }

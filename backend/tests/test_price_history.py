@@ -104,7 +104,11 @@ def _payload_no_history(url: str) -> dict:
         "product": {
             "title": "Test",
             "price": 100,
-            "originalPrice": 200,
+            # No `originalPrice` claim here — the agent's new multi-source
+            # cross-check would (correctly) flag `200 → 100` against a
+            # flat ₺100 history as ŞÜPHELİ İNDİRİM, raising priceAgent's
+            # score and breaking this assertion. The test's intent is
+            # to verify the history-fallback path, not discount logic.
             "currency": "TRY",
             "category": "Giyim",
             "url": url,

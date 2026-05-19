@@ -82,4 +82,20 @@ def run(req: AnalyzeRequest) -> AgentResult:
     else:
         label = "Yüksek Dürtü Riski"
 
+    # Tag the headline finding when impulse is in the elevated band — the
+    # decision rule engine combines this with other tags (suspiciousDiscount,
+    # lowReviewTrust) to trigger cross-agent escalations.
+    if score >= 60 and findings:
+        # Tag the first risk/warn finding so it's the user-facing one;
+        # safer than mutating a possibly-info-only fallback line.
+        for f in findings:
+            if f.severity in ("warn", "risk"):
+                # Pydantic models are immutable by default; rebuild with tag.
+                findings[findings.index(f)] = AgentFinding(
+                    severity=f.severity,
+                    message=f.message,
+                    tag="impulseHigh",
+                )
+                break
+
     return AgentResult(score=score, label=label, findings=findings)

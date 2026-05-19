@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import UserBudgetRow
-from app.models.schemas import UserBudget
+from app.models.schemas import CategoryBudget, UserBudget, UserBudgetSummary
 
 # Permissive defaults — only used by the GET endpoint to give the frontend
 # a sane starting state when no row exists. Never injected into the
@@ -41,6 +41,12 @@ DEFAULT_BUDGET = UserBudget(
     monthlySpent=0.0,
     currency="TRY",
 )
+
+# Reserved category slot holding the user's GLOBAL monthly envelope.
+# Stored as a normal user_budgets row so no schema migration is needed;
+# external callers should use the convenience helpers (get_global /
+# upsert_global) rather than passing this string in by hand.
+GLOBAL_CATEGORY = "__GLOBAL__"
 
 
 # ---------- Internal helpers ----------
@@ -84,6 +90,14 @@ def _row_for_category(rows: Iterable[UserBudgetRow], category: str) -> Optional[
     return None
 
 
+def _visible_rows(rows: Iterable[UserBudgetRow]) -> list[UserBudgetRow]:
+    """Filter out the GLOBAL sentinel — popup/listing surfaces only
+    user-named categories. The global envelope is exposed through its
+    own dedicated endpoint."""
+    target = GLOBAL_CATEGORY.casefold()
+    return [r for r in rows if r.category.strip().casefold() != target]
+
+
 def _to_budget(
     row: Optional[UserBudgetRow],
     *,
@@ -120,10 +134,16 @@ def _to_budget(
 def get(db: Session, user_id: str, category: str) -> Optional[UserBudget]:
     """Return the stored budget for (user_id, category) or ``None``.
 
-    Returns ``None`` when the user has never configured a budget at all.
-    If they've set a budget for a different category, we still return a
-    snapshot for `category` (using monthly limit as a category fallback)
-    so the analysis sees their overall cap.
+    Resolution order:
+        1. Exact (case-insensitive) match on (user_id, category).
+        2. GLOBAL sentinel row — the user's overall monthly envelope.
+        3. ``None`` only when the user has never configured anything.
+
+    The GLOBAL fallback is what makes the per-category model graceful:
+    when a brand-new category lands on the page (electronics product
+    after the user only configured "Giyim"), the analysis still scores
+    against the user's overall monthly cap rather than silently
+    degrading to "no budget data".
     """
     if not user_id or not category:
         return None
@@ -140,12 +160,123 @@ def get(db: Session, user_id: str, category: str) -> Optional[UserBudget]:
     monthly_limit_hint = rows[0].monthly_limit  # denormalized across rows
     currency_hint = rows[0].currency
 
+    row = _row_for_category(rows, category)
+    if row is None:
+        # Fall through to GLOBAL — explicit lookup ensures the synthesis
+        # below uses the global cap, not the first arbitrary category row.
+        row = _row_for_category(rows, GLOBAL_CATEGORY)
+
     return _to_budget(
-        _row_for_category(rows, category),
+        row,
         monthly_spent_total=monthly_spent_total,
         monthly_limit_hint=monthly_limit_hint,
         currency_hint=currency_hint,
     )
+
+
+def get_strict(db: Session, user_id: str, category: str) -> Optional[UserBudget]:
+    """Like :func:`get` but **does not** fall back to the GLOBAL row.
+
+    Returns the budget only when an exact (case-insensitive) row for
+    (user_id, category) exists. Used by the orchestrator when it needs
+    to choose explicitly between a per-category match and the GLOBAL
+    envelope.
+    """
+    if not user_id or not category:
+        return None
+
+    period = _month_start()
+    rows = _fetch_user_rows(db, user_id)
+    if not rows:
+        return None
+
+    if _reset_stale_rows(rows, period):
+        db.commit()
+
+    row = _row_for_category(rows, category)
+    if row is None:
+        return None
+
+    monthly_spent_total = sum(r.category_spent for r in rows)
+    monthly_limit_hint = rows[0].monthly_limit
+    currency_hint = rows[0].currency
+
+    return _to_budget(
+        row,
+        monthly_spent_total=monthly_spent_total,
+        monthly_limit_hint=monthly_limit_hint,
+        currency_hint=currency_hint,
+    )
+
+
+def get_global(db: Session, user_id: str) -> Optional[UserBudget]:
+    """Return just the GLOBAL envelope row for this user, or ``None``."""
+    return get_strict(db, user_id, GLOBAL_CATEGORY)
+
+
+def get_effective_global(db: Session, user_id: str) -> Optional[UserBudget]:
+    """Return the user's effective overall envelope.
+
+    Priority:
+        1. Explicit GLOBAL sentinel row (the new hybrid-model field).
+        2. Synthesized envelope from any per-category row — the row's
+           ``monthly_limit`` is the user's per-month cap (denormalized),
+           and we treat the synthesized ``category_limit`` as equal to
+           it so the agent scores purely on the monthly envelope. This
+           preserves the legacy "user only added one category, but their
+           ₺5000/month cap should still apply to OTHER categories"
+           behavior without requiring everyone to migrate to GLOBAL.
+        3. ``None`` only when the user has no rows at all.
+    """
+    explicit = get_global(db, user_id)
+    if explicit is not None:
+        return explicit
+
+    period = _month_start()
+    rows = _fetch_user_rows(db, user_id)
+    if not rows:
+        return None
+    if _reset_stale_rows(rows, period):
+        db.commit()
+
+    visible = _visible_rows(rows)
+    if not visible:
+        return None
+
+    monthly_spent_total = sum(r.category_spent for r in rows)
+    base = visible[0]
+    return UserBudget(
+        monthlyLimit=base.monthly_limit,
+        categoryLimit=base.monthly_limit,  # synthesized cap = monthly cap
+        categorySpent=0.0,
+        monthlySpent=monthly_spent_total,
+        currency=base.currency,  # type: ignore[arg-type]
+    )
+
+
+def upsert_global(
+    db: Session,
+    *,
+    user_id: str,
+    monthly_limit: float,
+    currency: str = "TRY",
+) -> UserBudgetRow:
+    """Write the user's GLOBAL monthly envelope.
+
+    Sets the GLOBAL row's ``category_limit`` equal to its ``monthly_limit``
+    so the budget agent's category-cap check degrades to the monthly cap
+    when no narrower per-category row applies. Also propagates the new
+    monthly_limit across the user's named-category rows so the
+    denormalized value stays consistent everywhere.
+    """
+    budget = UserBudget(
+        monthlyLimit=monthly_limit,
+        categoryLimit=monthly_limit,
+        categorySpent=0.0,
+        monthlySpent=None,
+        currency=currency,  # type: ignore[arg-type]
+    )
+    return upsert(db, user_id=user_id, category=GLOBAL_CATEGORY, budget=budget)
 
 
 def get_or_default(db: Session, user_id: str, category: str) -> UserBudget:
@@ -265,8 +396,10 @@ def record_purchase(
 
 
 def list_for_user(db: Session, user_id: str) -> list[UserBudgetRow]:
-    """Return the user's full set of category rows, with stale rows
-    reset to the current period. Empty list if the user has nothing."""
+    """Return the user's full set of category rows (including GLOBAL),
+    with stale rows reset to the current period. Callers that want
+    user-visible rows only should run :func:`visible_rows` on the result.
+    Empty list if the user has nothing."""
     period = _month_start()
     rows = _fetch_user_rows(db, user_id)
     if not rows:
@@ -274,6 +407,42 @@ def list_for_user(db: Session, user_id: str) -> list[UserBudgetRow]:
     if _reset_stale_rows(rows, period):
         db.commit()
     return rows
+
+
+def visible_rows(rows: Iterable[UserBudgetRow]) -> list[UserBudgetRow]:
+    """Public-facing helper: drop the GLOBAL sentinel from a row list."""
+    return _visible_rows(rows)
+
+
+def summarize_for_user(db: Session, user_id: str) -> Optional[UserBudgetSummary]:
+    """Build the popup-shaped summary in one go.
+
+    Lifts the per-category aggregation that used to live inside the
+    ``GET /api/user-budgets`` route. Returns ``None`` when the user has
+    no rows at all — the caller surfaces an empty-state default.
+    """
+    rows = list_for_user(db, user_id)
+    if not rows:
+        return None
+
+    monthly_spent = sum(r.category_spent for r in rows)
+    visible = _visible_rows(rows)
+    categories = [
+        CategoryBudget(
+            category=r.category,
+            categoryLimit=r.category_limit,
+            categorySpent=r.category_spent,
+        )
+        for r in visible
+    ]
+    return UserBudgetSummary(
+        userId=user_id,
+        monthlyLimit=rows[0].monthly_limit,
+        monthlySpent=monthly_spent,
+        currency=rows[0].currency,  # type: ignore[arg-type]
+        periodStart=rows[0].period_start.isoformat(),
+        categories=categories,
+    )
 
 
 def monthly_spent_for(db: Session, user_id: str) -> float:

@@ -14,6 +14,8 @@ import time
 from types import SimpleNamespace
 from typing import Optional
 
+import pytest
+
 from app.agents import decision_agent, review_agent
 from app.core.cache import TTLCache
 from app.models.schemas import (
@@ -201,4 +203,135 @@ def test_decision_agent_cache_misses_on_different_agent_fingerprint(monkeypatch)
     # Bump price.score → fingerprint differs → cache miss.
     decision_agent.run(req, review=_agent(40), price=_agent(85), budget=_agent(45), impulse=_agent(40))
 
+    assert client.models.call_count == 2
+
+
+# ---------- TTLCache: counters, prefix/predicate invalidation, per-call TTL ----------
+
+
+def test_ttl_cache_counts_hits_and_misses():
+    c = TTLCache(max_size=4, ttl_seconds=60, namespace="t")
+    c.set("a", 1)
+    c.get("a")  # hit
+    c.get("a")  # hit
+    c.get("missing")  # miss
+    stats = c.stats()
+    assert stats["hits"] == 2
+    assert stats["misses"] == 1
+    assert stats["sets"] == 1
+    assert stats["size"] == 1
+    assert stats["hit_rate"] == pytest.approx(2 / 3, abs=1e-3)
+
+
+def test_ttl_cache_expired_get_counts_as_miss():
+    c = TTLCache(max_size=4, ttl_seconds=0.02)
+    c.set("a", 1)
+    time.sleep(0.04)
+    assert c.get("a") is None
+    assert c.stats()["misses"] == 1
+    assert c.stats()["hits"] == 0
+
+
+def test_ttl_cache_per_call_ttl_overrides_default():
+    c = TTLCache(max_size=4, ttl_seconds=60)
+    c.set("short", 1, ttl=0.02)
+    c.set("long", 2)  # uses default 60s
+    time.sleep(0.04)
+    assert c.get("short") is None
+    assert c.get("long") == 2
+
+
+def test_ttl_cache_invalidate_prefix():
+    c = TTLCache(max_size=10, ttl_seconds=60)
+    c.set("dec::u=alice:p=h1:x", 1)
+    c.set("dec::u=alice:p=h2:y", 2)
+    c.set("dec::u=bob:p=h1:z", 3)
+    removed = c.invalidate_prefix("dec::u=alice:")
+    assert removed == 2
+    assert c.get("dec::u=alice:p=h1:x") is None
+    assert c.get("dec::u=bob:p=h1:z") == 3
+    assert c.stats()["invalidations"] == 2
+
+
+def test_ttl_cache_invalidate_predicate():
+    c = TTLCache(max_size=10, ttl_seconds=60)
+    c.set("dec::u=alice:p=h1:x", 1)
+    c.set("dec::u=alice:p=h2:y", 2)
+    c.set("dec::u=bob:p=h2:z", 3)
+    removed = c.invalidate_predicate(lambda k: isinstance(k, str) and ":p=h2:" in k)
+    assert removed == 2
+    assert c.get("dec::u=alice:p=h1:x") == 1
+
+
+# ---------- Cross-cutting invalidation helpers ----------
+
+
+def test_invalidate_for_user_only_drops_target_user(monkeypatch):
+    from app.core import cache as cache_mod
+
+    # Two users, each with one cached decision narration.
+    cache_mod.gemini_cache.set("dec::u=alice:p=h1:digest", "alice-narration")
+    cache_mod.gemini_cache.set("dec::u=bob:p=h1:digest", "bob-narration")
+
+    dropped = cache_mod.invalidate_for_user("alice")
+    assert dropped == 1
+    assert cache_mod.gemini_cache.get("dec::u=alice:p=h1:digest") is None
+    assert cache_mod.gemini_cache.get("dec::u=bob:p=h1:digest") == "bob-narration"
+
+
+def test_invalidate_for_url_only_drops_target_url():
+    from app.core import cache as cache_mod
+
+    cache_mod.gemini_cache.set("dec::u=alice:p=hA:1", "a-on-hA")
+    cache_mod.gemini_cache.set("dec::u=alice:p=hB:2", "a-on-hB")
+    cache_mod.gemini_cache.set("rev::u=alice:p=hA:3", "rev-on-hA")
+
+    dropped = cache_mod.invalidate_for_url("hA")
+    assert dropped == 2  # dec + rev for hA
+    assert cache_mod.gemini_cache.get("dec::u=alice:p=hB:2") == "a-on-hB"
+
+
+# ---------- force_refresh bypasses the cache ----------
+
+
+def test_review_agent_force_refresh_bypasses_cache(monkeypatch):
+    parsed = {
+        "score": 50,
+        "label": "Şüpheli",
+        "findings": [{"severity": "warn", "message": "tekrar"}],
+    }
+    client = _CountingClient(_CountingResponse(parsed=parsed))
+    monkeypatch.setattr(review_agent, "get_client", lambda: client)
+
+    req = _req_with_reviews()
+    review_agent.run(req)
+    review_agent.run(req)  # cache hit
+    assert client.models.call_count == 1
+
+    review_agent.run(req, force_refresh=True)
+    assert client.models.call_count == 2
+
+
+def test_decision_agent_force_refresh_bypasses_cache(monkeypatch):
+    narration = {
+        "summary": "Birkaç sinyal kontrol edilmeli.",
+        "reasons": ["a", "b", "c"],
+        "recommendedAction": "Birkaç noktayı tekrar gözden geçir",
+    }
+    client = _CountingClient(_CountingResponse(parsed=narration))
+    monkeypatch.setattr(decision_agent, "get_client", lambda: client)
+
+    req = _req_with_reviews()
+    decision_agent.run(req, review=_agent(40), price=_agent(50), budget=_agent(45), impulse=_agent(40))
+    decision_agent.run(req, review=_agent(40), price=_agent(50), budget=_agent(45), impulse=_agent(40))
+    assert client.models.call_count == 1
+
+    decision_agent.run(
+        req,
+        review=_agent(40),
+        price=_agent(50),
+        budget=_agent(45),
+        impulse=_agent(40),
+        force_refresh=True,
+    )
     assert client.models.call_count == 2
